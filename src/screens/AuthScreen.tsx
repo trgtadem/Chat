@@ -10,24 +10,37 @@ import {
   ActivityIndicator,
   ScrollView,
   LayoutAnimation,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
-import { Mail, Lock, User as UserIcon, AlertCircle, MessageSquare } from 'lucide-react-native';
+import {
+  Mail,
+  Lock,
+  User as UserIcon,
+  AlertCircle,
+  MessageSquare,
+} from 'lucide-react-native';
 
 import { auth, db } from '../../firebaseConfig';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+} from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 
-import { User } from '../types';
 import { COLORS, baseStyles } from '../styles/baseStyles';
 
-// AuthScreen, App.tsx'den çıkarıldı ve kendi dosyasına taşındı.
-// Bu component artık kendi içinde stil tanımlarını barındırıyor ve
-// dışarıdan sadece onLoginSuccess callback'ini alıyor.
-export function AuthScreen({ onLoginSuccess }: { onLoginSuccess: (user: User) => void }) {
+type RootStackParamList = {
+  Auth: undefined;
+};
+
+type AuthScreenProps = NativeStackScreenProps<RootStackParamList, 'Auth'>;
+
+export function AuthScreen({ navigation }: AuthScreenProps) {
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');

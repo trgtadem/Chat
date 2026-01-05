@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "MyGameApp",
-    "slug": "MyGameApp",
+    "name": "KOBAY 1",
+    "slug": "KOBAY",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -28,8 +28,15 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
+      "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyB7rAC1pAWYWPsuXW_BtCV-2RlLcbUuas4",
+      "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "mobilapp-b46ba.firebaseapp.com",
+      "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "mobilapp-b46ba",
+      "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "mobilapp-b46ba.firebasestorage.app",
+      "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "610020027674",
+      "EXPO_PUBLIC_FIREBASE_APP_ID": "1:610020027674:web:083f1a51b258579b6250a3",
+      "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-C38FFN206H",
       "eas": {
-        "projectId": "c5952cf3-4ed8-41be-82e9-bd57495d2f7a"
+        "projectId": "23b216cc-6077-4732-958a-e9eb73417cf6"
       }
     }
   }

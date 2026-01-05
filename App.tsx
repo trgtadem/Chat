@@ -1,229 +1,179 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  FlatList,
-  StyleSheet,
-  StatusBar,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
-  ScrollView,
-  LayoutAnimation,
-  UIManager,
+  StatusBar,
   AppState,
-  BackHandler, // Geri tuşu için
-  Alert
-} from "react-native";
-import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
-import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
+  Alert,
+  BackHandler,
+  Platform,
+} from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 
-import { 
-  Send, 
-  MessageCircle, 
-  LogOut,
-  Mail,
-  Lock,
-  User as UserIcon,
-  AlertCircle,
-  ChevronLeft,
-  MessageSquare,
-  Check, // Tik işareti için
-  CheckCheck, // Çift tik için
-  Paperclip
-} from "lucide-react-native";
+import { auth, db } from './firebaseConfig';
+import {
+  onAuthStateChanged,
+  signOut,
+} from 'firebase/auth';
+import {
+  doc,
+  updateDoc,
+  getDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
 
-import { auth, db } from "./firebaseConfig"; 
-import { 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword, 
-  onAuthStateChanged, 
-  signOut 
-} from "firebase/auth"; 
-import { collection, doc, setDoc, addDoc, onSnapshot, query, orderBy, serverTimestamp, getDoc, updateDoc, where, writeBatch, getDocs, limit } from "firebase/firestore"; 
+import { User } from './src/types';
+import { COLORS, baseStyles } from './src/styles/baseStyles';
 
-// Bildirim Ayarları
+import { AuthScreen } from './src/screens/AuthScreen';
+import { HomeScreen } from './src/screens/HomeScreen';
+import { ChatScreen } from './src/screens/ChatScreen';
+import { ProfileScreen } from './src/screens/ProfileScreen';
+
+// Notification Handler Setup
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
 
-import { User, Message } from "./src/types";
+type RootStackParamList = {
+  Auth: undefined;
+  Home: undefined;
+  Chat: { user: User; friend: User };
+  Profile: { user: User };
+};
 
-import { AuthScreen } from "./src/screens/AuthScreen";
-import { COLORS, baseStyles } from './src/styles/baseStyles';
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
-import { HomeScreen } from './src/screens/HomeScreen';
-import { getChatId, formatTime, formatLastSeen } from './src/utils';
-
-// ==================== BİLDİRİM GÖNDERME FONKSİYONU ====================
-async function sendPushNotification(expoPushToken: string, title: string, body: string) {
-  const message = {
-    to: expoPushToken,
-    sound: 'default',
-    title: title,
-    body: body,
-    data: { someData: 'goes here' },
-  };
-
-  await fetch('https://exp.host/--/api/v2/push/send', {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Accept-encoding': 'gzip, deflate',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(message),
-  });
-}
-
-import { ChatScreen } from "./src/screens/ChatScreen";
-
-// ==================== MAIN APP ====================
-export default function App() {
-  const [activeScreen, setActiveScreen] = useState<"AUTH" | "HOME" | "CHAT">("AUTH");
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [selectedFriend, setSelectedFriend] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  // ANDROID GERİ TUŞU KONTROLÜ
-  useEffect(() => {
-    const backAction = () => {
-      if (activeScreen === "CHAT") {
-        setActiveScreen("HOME");
-        setSelectedFriend(null);
-        return true; // Varsayılan geri işlemini engelle
-      } else if (activeScreen === "HOME") {
-        BackHandler.exitApp(); // Uygulamadan çık
-        return true;
-      } else if (activeScreen === "AUTH") {
-        BackHandler.exitApp();
-        return true;
-      }
-      return false;
-    };
-
-    const backHandler = BackHandler.addEventListener(
-      "hardwareBackPress",
-      backAction
-    );
-
-    return () => backHandler.remove();
-  }, [activeScreen]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', async (nextAppState) => {
-      if (auth.currentUser) {
-        if (nextAppState === 'active') {
-          await updateDoc(doc(db, "users", auth.currentUser.uid), { online: true });
-        } else if (nextAppState === 'background') {
-          await updateDoc(doc(db, "users", auth.currentUser.uid), { online: false });
-          await updateDoc(doc(db, "users", auth.currentUser.uid), { online: false, lastSeen: serverTimestamp() });
-        }
-      }
-    });
-    return () => subscription.remove();
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
-      if (authUser) {
-        setLoading(true);
-        let attempts = 0;
-        const fetchUser = async () => {
-          try {
-            const userDoc = await getDoc(doc(db, "users", authUser.uid));
-            if (userDoc.exists()) {
-              const userData = userDoc.data() as User;
-              // Token güncelle (Değişmiş olabilir)
-              const newToken = await registerForPushNotificationsAsync();
-              if (newToken && newToken !== userData.pushToken) {
-                  await updateDoc(doc(db, "users", authUser.uid), { pushToken: newToken });
-                  userData.pushToken = newToken;
-              }
-              
-              setCurrentUser(userData);
-              setActiveScreen("HOME");
-              await updateDoc(doc(db, "users", authUser.uid), { online: true });
-              setLoading(false);
-            } else {
-              Alert.alert(
-                "Giriş Hatası",
-                "Kimlik doğrulama başarılı ancak veritabanında kullanıcı kaydınız bulunamadı. Lütfen yeni bir hesap oluşturun veya yönetici ile iletişime geçin."
-              );
-              // Kullanıcıyı hayalet durumda bırakmamak için çıkış yaptır
-              await signOut(auth);
-              setActiveScreen("AUTH");
-              setLoading(false);
-            }
-          } catch (e: any) { 
-              Alert.alert("Veri Çekme Hatası", e.message);
-              setLoading(false); 
-          }
-        };
-        fetchUser();
-      } else {
-        setActiveScreen("AUTH");
-        setCurrentUser(null);
-        setLoading(false);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Auth ekranında kullanılacak token fonksiyonu
-  const registerForPushNotificationsAsync = async () => {
-    let token;
+const registerForPushNotificationsAsync = async () => {
+  let token;
+  try {
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
-        name: 'default', importance: Notifications.AndroidImportance.MAX,
+        name: 'default',
+        importance: Notifications.AndroidImportance.MAX,
       });
     }
+
     if (Device.isDevice) {
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      const { status: existingStatus } =
+        await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
       if (existingStatus !== 'granted') {
         const { status } = await Notifications.requestPermissionsAsync();
         finalStatus = status;
       }
       if (finalStatus !== 'granted') return null;
-      try {
-        const tokenData = await Notifications.getExpoPushTokenAsync({
-          projectId: Constants.expoConfig?.extra?.eas?.projectId,
-        });
-        token = tokenData.data;
-      } catch (error) { return null; }
-    }
-    return token;
-  };
 
-  const handleLogout = async () => {
-    if (currentUser) {
-      try {
-        await updateDoc(doc(db, "users", currentUser.id), { online: false });
-        await updateDoc(doc(db, "users", currentUser.id), { online: false, lastSeen: serverTimestamp() });
-        await signOut(auth);
-      } catch (error) { console.error(error) }
+      const tokenData = await Notifications.getExpoPushTokenAsync({
+        projectId: Constants.expoConfig?.extra?.eas?.projectId,
+      });
+      token = tokenData.data;
     }
-  };
+  } catch (error) {
+    console.log(
+      'Push notification token unavailable (Expo Go limitation):',
+      error
+    );
+    return null;
+  }
+  return token;
+};
 
-  const handleSelectChat = (friend: User) => {
-    setSelectedFriend(friend);
-    setActiveScreen("CHAT");
-  };
+export default function App() {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Handle AppState changes for online/offline status
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', async (nextAppState) => {
+      if (auth.currentUser) {
+        try {
+          if (nextAppState === 'active') {
+            await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+              online: true,
+            });
+          } else if (nextAppState === 'background' || nextAppState === 'inactive') {
+            await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+              online: false,
+              lastSeen: serverTimestamp(),
+            });
+          }
+        } catch (error) {
+          console.error('Error updating online status:', error);
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  // Monitor auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+      if (authUser) {
+        setLoading(true);
+        try {
+          const userDoc = await getDoc(doc(db, 'users', authUser.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as User;
+
+            // Update push token if changed
+            const newToken = await registerForPushNotificationsAsync();
+            if (newToken && newToken !== userData.pushToken) {
+              await updateDoc(doc(db, 'users', authUser.uid), {
+                pushToken: newToken,
+              });
+              userData.pushToken = newToken;
+            }
+
+            // Set online status
+            await updateDoc(doc(db, 'users', authUser.uid), { online: true });
+
+            setCurrentUser(userData);
+            setLoading(false);
+          } else {
+            Alert.alert(
+              'Login Error',
+              'User account not found in database. Please create a new account or contact support.'
+            );
+            await signOut(auth);
+            setLoading(false);
+          }
+        } catch (error: any) {
+          Alert.alert('Data Retrieval Error', error.message);
+          setLoading(false);
+        }
+      } else {
+        setCurrentUser(null);
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   if (loading) {
     return (
-      <View style={[baseStyles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+      <View
+        style={[
+          baseStyles.container,
+          { justifyContent: 'center', alignItems: 'center' },
+        ]}
+      >
         <ActivityIndicator size="large" color={COLORS.primary} />
       </View>
     );
@@ -232,12 +182,71 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-          <View style={baseStyles.container}>
+        <NavigationContainer>
           <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
-          {activeScreen === "AUTH" && <AuthScreen onLoginSuccess={() => {}} />}
-          {activeScreen === "HOME" && currentUser && <HomeScreen currentUser={currentUser} onSelectChat={handleSelectChat} onLogout={handleLogout} />}
-          {activeScreen === "CHAT" && selectedFriend && currentUser && <ChatScreen user={currentUser} friend={selectedFriend} onBack={() => setActiveScreen("HOME")} />}
-          </View>
+          <Stack.Navigator
+            screenOptions={{
+              headerShown: false,
+            }}
+          >
+            {currentUser ? (
+              <>
+                <Stack.Screen
+                  name="Home"
+                  options={{}}
+                >
+                  {(props) => (
+                    <HomeScreen
+                      currentUser={currentUser}
+                      onLogout={async () => {
+                        try {
+                          await updateDoc(doc(db, 'users', currentUser.id), {
+                            online: false,
+                            lastSeen: serverTimestamp(),
+                          });
+                          await signOut(auth);
+                        } catch (error) {
+                          console.error(error);
+                        }
+                      }}
+                      {...props}
+                    />
+                  )}
+                </Stack.Screen>
+                <Stack.Screen
+                  name="Chat"
+                  options={{}}
+                >
+                  {(props) => (
+                    <ChatScreen
+                      currentUser={currentUser}
+                      {...props}
+                    />
+                  )}
+                </Stack.Screen>
+                <Stack.Screen
+                  name="Profile"
+                  options={{}}
+                >
+                  {(props) => (
+                    <ProfileScreen
+                      currentUser={currentUser}
+                      onUserUpdate={setCurrentUser}
+                      {...props}
+                    />
+                  )}
+                </Stack.Screen>
+              </>
+            ) : (
+              <Stack.Screen
+                name="Auth"
+                options={{}}
+              >
+                {(props) => <AuthScreen {...props} />}
+              </Stack.Screen>
+            )}
+          </Stack.Navigator>
+        </NavigationContainer>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
