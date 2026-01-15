@@ -6,8 +6,13 @@ service cloud.firestore {
       // Giriş yapmış herhangi bir kullanıcı, kullanıcı listesini okuyabilir.
       allow read: if request.auth != null;
 
-      // Bir kullanıcı sadece kendi belgesini yazabilir/güncelleyebilir.
-      allow write: if request.auth.uid == userId;
+      // Bir kullanıcı sadece kendi belgesini oluşturabilir/yazabilir/güncelleyebilir.
+      // Yeni kullanıcı kaydı için: authenticated kullanıcı kendi belgesini oluşturabilir
+      allow create: if request.auth != null && request.auth.uid == userId;
+      // Mevcut belgeleri güncelleme: sadece kendi belgesini güncelleyebilir
+      allow update: if request.auth != null && request.auth.uid == userId;
+      // Silme: sadece kendi belgesini silebilir (opsiyonel)
+      allow delete: if request.auth != null && request.auth.uid == userId;
 
       // New rule for userChats subcollection
       match /userChats/{chatPartnerId} { // Renamed friendId to chatPartnerId for clarity

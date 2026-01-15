@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft, Camera } from 'lucide-react-native';
+import { ChevronLeft, Camera, LogOut } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 
@@ -33,24 +33,74 @@ export function ProfileScreen({
   navigation,
   currentUser,
   onUserUpdate,
+  onLogout,
 }: {
   route: ProfileScreenProps['route'];
   navigation: ProfileScreenProps['navigation'];
   currentUser: User;
   onUserUpdate: (user: User) => void;
+  onLogout: () => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
-  const [name, setName] = useState(currentUser.name);
-  const [surname, setSurname] = useState(currentUser.surname);
-  const [about, setAbout] = useState(currentUser.about || '');
-  const [avatar, setAvatar] = useState(currentUser.avatar);
+  const [name, setName] = useState(currentUser?.name ?? 'Unknown');
+  const [surname, setSurname] = useState(currentUser?.surname ?? '');
+  const [about, setAbout] = useState(currentUser?.about ?? '');
+  const [avatar, setAvatar] = useState(currentUser?.avatar ?? 'https://via.placeholder.com/100');
   const [loading, setLoading] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerShown: false,
+      headerShown: true,
+      headerTitle: 'Profile',
+      headerStyle: {
+        backgroundColor: COLORS.background,
+        borderBottomColor: COLORS.surface,
+        borderBottomWidth: 1,
+      },
+      headerTintColor: COLORS.textPrimary,
+      headerTitleStyle: {
+        color: COLORS.textPrimary,
+        fontWeight: '600',
+      },
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={{ marginLeft: 16 }}
+        >
+          <ChevronLeft size={24} color={COLORS.textPrimary} />
+        </TouchableOpacity>
+      ),
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={handleLogoutPress}
+          style={{ marginRight: 16 }}
+        >
+          <LogOut size={24} color="#FF5555" />
+        </TouchableOpacity>
+      ),
     });
-  }, [navigation]);
+  }, [navigation, isEditing]);
+
+  const handleLogoutPress = () => {
+    Alert.alert(
+      'Çıkış Yap',
+      'Hesabınızdan çıkış yapmak istediğinize emin misiniz?',
+      [
+        {
+          text: 'Vazgeç',
+          onPress: () => {},
+          style: 'cancel',
+        },
+        {
+          text: 'Çıkış Yap',
+          onPress: () => {
+            onLogout();
+          },
+          style: 'destructive',
+        },
+      ]
+    );
+  };
 
   const uploadToCloudinary = async (imageUri: string): Promise<string> => {
     try {
@@ -95,7 +145,7 @@ export function ProfileScreen({
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -117,6 +167,11 @@ export function ProfileScreen({
   const handleSave = async () => {
     if (!name.trim() || !surname.trim()) {
       Alert.alert('Validation', 'Name and surname are required.');
+      return;
+    }
+
+    if (!currentUser?.id) {
+      Alert.alert('Error', 'User ID is not available.');
       return;
     }
 
@@ -149,10 +204,10 @@ export function ProfileScreen({
   };
 
   const handleCancel = () => {
-    setName(currentUser.name);
-    setSurname(currentUser.surname);
-    setAbout(currentUser.about || '');
-    setAvatar(currentUser.avatar);
+    setName(currentUser?.name ?? 'Unknown');
+    setSurname(currentUser?.surname ?? '');
+    setAbout(currentUser?.about ?? '');
+    setAvatar(currentUser?.avatar ?? 'https://via.placeholder.com/100');
     setIsEditing(false);
   };
 
@@ -162,17 +217,6 @@ export function ProfileScreen({
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={{ padding: 8 }}
-          >
-            <ChevronLeft size={28} color={COLORS.textPrimary} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Profile</Text>
-          <View style={{ width: 44 }} />
-        </View>
-
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={styles.content}
@@ -256,7 +300,7 @@ export function ProfileScreen({
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Email</Text>
             <View style={[styles.input, { justifyContent: 'center' }]}>
-              <Text style={styles.emailText}>{currentUser.email}</Text>
+              <Text style={styles.emailText}>{currentUser?.email ?? 'No email'}</Text>
             </View>
           </View>
 

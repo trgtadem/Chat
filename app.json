@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "KOBAY 1",
+    "name": "Chat",
     "slug": "KOBAY",
-    "version": "1.0.0",
+    "version": "1.1.1",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/adaptive-icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {

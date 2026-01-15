@@ -30,12 +30,13 @@ import {
   increment,
   serverTimestamp,
   updateDoc,
+  setDoc,
 } from 'firebase/firestore';
 
 import { db } from '../../firebaseConfig';
 import { User, Message } from '../types';
 import { COLORS } from '../styles/baseStyles';
-import { getChatId, formatTime, sendPushNotification } from '../utils';
+import { getChatId, formatTime, formatLastSeen, sendPushNotification } from '../utils';
 import { SwipeableMessage } from '../components/SwipeableMessage';
 
 type RootStackParamList = {
@@ -53,7 +54,7 @@ export function ChatScreen({
   navigation: ChatScreenProps['navigation'];
   currentUser: User;
 }) {
-  const { user, friend } = route.params;
+  const { user, friend, forwardingMessage: routeForwardingMessage } = route.params;
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -65,11 +66,113 @@ export function ChatScreen({
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState('');
   const [messagesWithImages, setMessagesWithImages] = useState<string[]>([]);
+  const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
+  const [isSending, setIsSending] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  if (!user?.id || !friend?.id) {
+    console.error('User or friend ID is missing');
+    return <Text style={{color: 'red'}}>Error: Missing user information</Text>;
+  }
+  
   const chatId = getChatId(user.id, friend.id);
+
+  // Handle forwarding message from route params
+  useEffect(() => {
+    if (routeForwardingMessage) {
+      handleForwardToCurrentChat(routeForwardingMessage);
+    }
+  }, [routeForwardingMessage]);
+
+  const handleForwardToCurrentChat = async (message: Message) => {
+    try {
+      const forwardedMessageData = {
+        type: message.type,
+        text: message.text || null,
+        senderId: user.id,
+        createdAt: serverTimestamp(),
+        status: 'sent',
+        chatId,
+        imageUrl: message.imageUrl || null,
+        audioUrl: message.audioUrl || null,
+        fileUrl: message.fileUrl || null,
+        fileName: message.fileName || null,
+        forwarded: true,
+        forwardedFrom: message.senderId === user.id ? 'You' : (friend?.name ?? 'Unknown'),
+      };
+
+      const batch = writeBatch(db);
+      const messageRef = doc(collection(db, 'chats', chatId, 'messages'));
+      batch.set(messageRef, forwardedMessageData);
+
+      const senderChatRef = doc(
+        db,
+        'users',
+        user.id,
+        'userChats',
+        friend.id
+      );
+      batch.set(
+        senderChatRef,
+        {
+          id: friend.id,
+          name: friend?.name ?? 'Unknown',
+          surname: friend?.surname ?? '',
+          avatar: friend?.avatar ?? 'https://via.placeholder.com/50',
+          email: friend?.email ?? '',
+          online: friend?.online ?? false,
+          lastSeen: friend?.lastSeen,
+          lastMessage: forwardedMessageData,
+          pushToken: friend?.pushToken ?? null,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      const friendChatRef = doc(
+        db,
+        'users',
+        friend.id,
+        'userChats',
+        user.id
+      );
+      batch.set(
+        friendChatRef,
+        {
+          id: user.id,
+          name: user?.name ?? 'Unknown',
+          surname: user?.surname ?? '',
+          avatar: user?.avatar ?? 'https://via.placeholder.com/50',
+          email: user?.email ?? '',
+          online: user?.online ?? false,
+          lastSeen: user?.lastSeen,
+          lastMessage: forwardedMessageData,
+          unreadCount: increment(1),
+          pushToken: user?.pushToken ?? null,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      await batch.commit();
+
+      if (friend.pushToken && friend.pushToken !== currentUser.pushToken) {
+        await sendPushNotification(
+          friend.pushToken,
+          `${user.name} ${user.surname}`,
+          'Forwarded a message'
+        );
+      }
+
+      Alert.alert('Success', 'Message forwarded successfully.');
+    } catch (error) {
+      console.error('Forward error:', error);
+      Alert.alert('Error', 'Failed to forward message.');
+    }
+  };
 
   // Setup header with navigation
   useLayoutEffect(() => {
@@ -83,16 +186,18 @@ export function ChatScreen({
     const messagesRef = collection(db, 'chats', chatId, 'messages');
     const q = query(messagesRef, orderBy('createdAt', 'asc'));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      } as Message));
-      setMessages(msgs);
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const msgs = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        } as Message));
+        setMessages(msgs);
 
-      // Extract image URLs for image viewer
-      const imageUrls = msgs
-        .filter((msg) => msg.type === 'image' && msg.imageUrl)
+        // Extract image URLs for image viewer
+        const imageUrls = msgs
+          .filter((msg) => msg.type === 'image' && msg.imageUrl)
         .map((msg) => msg.imageUrl!);
       setMessagesWithImages(imageUrls);
 
@@ -120,7 +225,11 @@ export function ChatScreen({
 
         batch.commit();
       }
-    });
+      },
+      (error) => {
+        console.error('Error fetching messages:', error?.message || error?.code || error);
+      }
+    );
 
     return () => unsubscribe();
   }, [chatId, user.id]);
@@ -128,14 +237,20 @@ export function ChatScreen({
   // Listen to typing status
   useEffect(() => {
     const typingRef = doc(db, 'chats', chatId);
-    const unsubscribe = onSnapshot(typingRef, (snapshot) => {
-      const data = snapshot.data();
-      if (data?.typing && data.typing[friend.id]) {
-        setFriendIsTyping(true);
-      } else {
-        setFriendIsTyping(false);
+    const unsubscribe = onSnapshot(
+      typingRef,
+      (snapshot) => {
+        const data = snapshot.data();
+        if (data?.typing && data.typing[friend.id]) {
+          setFriendIsTyping(true);
+        } else {
+          setFriendIsTyping(false);
+        }
+      },
+      (error) => {
+        console.error('Error fetching typing status:', error?.message || error?.code || error);
       }
-    });
+    );
 
     return () => unsubscribe();
   }, [chatId, friend.id]);
@@ -189,7 +304,7 @@ export function ChatScreen({
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         allowsEditing: false,
         quality: 0.8,
       });
@@ -237,18 +352,36 @@ export function ChatScreen({
 
   const startRecording = async () => {
     try {
-      const permission = await Audio.requestPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          'Permission required',
-          'You need to grant microphone permissions to record audio.'
-        );
-        return;
+      // Request microphone permissions first
+      if (Audio.getPermissionsAsync) {
+        const { status } = await Audio.getPermissionsAsync();
+        if (status !== 'granted') {
+          if (Audio.requestPermissionsAsync) {
+            const { status: newStatus } = await Audio.requestPermissionsAsync();
+            if (newStatus !== 'granted') {
+              Alert.alert(
+                'Permission required',
+                'You need to grant microphone permissions to record audio.'
+              );
+              return;
+            }
+          } else {
+            Alert.alert(
+              'Permission required',
+              'Microphone permissions are required for recording.'
+            );
+            return;
+          }
+        }
       }
 
+      // Set audio mode
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
       });
 
       const recording = new Audio.Recording();
@@ -309,14 +442,18 @@ export function ChatScreen({
   const handleTyping = (text: string) => {
     setInputText(text);
 
-    // Update typing status
+    // Update typing status - use setDoc with merge to create if doesn't exist
     if (!isTyping) {
       setIsTyping(true);
-      updateDoc(doc(db, 'chats', chatId), {
-        typing: {
-          [user.id]: true,
+      setDoc(
+        doc(db, 'chats', chatId),
+        {
+          typing: {
+            [user.id]: true,
+          },
         },
-      }).catch(console.error);
+        { merge: true }
+      ).catch(console.error);
     }
 
     // Debounce typing status update
@@ -326,11 +463,15 @@ export function ChatScreen({
 
     typingTimeoutRef.current = setTimeout(async () => {
       setIsTyping(false);
-      await updateDoc(doc(db, 'chats', chatId), {
-        typing: {
-          [user.id]: false,
+      await setDoc(
+        doc(db, 'chats', chatId),
+        {
+          typing: {
+            [user.id]: false,
+          },
         },
-      }).catch(console.error);
+        { merge: true }
+      ).catch(console.error);
     }, 2000);
   };
 
@@ -344,8 +485,12 @@ export function ChatScreen({
       createdAt: serverTimestamp(),
       status: 'sent',
       chatId,
-      ...payload,
-      ...(replyingTo && { replyTo: replyingTo }),
+      text: null,
+      imageUrl: payload.imageUrl || null,
+      audioUrl: payload.audioUrl || null,
+      fileUrl: payload.fileUrl || null,
+      fileName: payload.fileName || null,
+      replyTo: replyingTo || null,
     };
 
     try {
@@ -363,7 +508,15 @@ export function ChatScreen({
       batch.set(
         senderChatRef,
         {
+          id: friend.id,
+          name: friend?.name ?? 'Unknown',
+          surname: friend?.surname ?? '',
+          avatar: friend?.avatar ?? 'https://via.placeholder.com/50',
+          email: friend?.email ?? '',
+          online: friend?.online ?? false,
+          lastSeen: friend?.lastSeen,
           lastMessage: messageData,
+          pushToken: friend?.pushToken ?? null,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -379,8 +532,16 @@ export function ChatScreen({
       batch.set(
         friendChatRef,
         {
+          id: user.id,
+          name: user?.name ?? 'Unknown',
+          surname: user?.surname ?? '',
+          avatar: user?.avatar ?? 'https://via.placeholder.com/50',
+          email: user?.email ?? '',
+          online: user?.online ?? false,
+          lastSeen: user?.lastSeen,
           lastMessage: messageData,
           unreadCount: increment(1),
+          pushToken: user?.pushToken ?? null,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -388,7 +549,7 @@ export function ChatScreen({
 
       await batch.commit();
 
-      if (friend.pushToken) {
+      if (friend.pushToken && friend.pushToken !== currentUser.pushToken) {
         const typeEmojis = {
           image: '📸',
           audio: '🎙️',
@@ -411,17 +572,18 @@ export function ChatScreen({
   const handleSendMessage = async () => {
     if (!inputText.trim()) return;
 
+    setIsSending(true);
     const textToSend = inputText;
     setInputText('');
 
     const messageData = {
       type: 'text',
-      text: textToSend,
+      text: textToSend || null,
       senderId: user.id,
       createdAt: serverTimestamp(),
       status: 'sent',
       chatId,
-      ...(replyingTo && { replyTo: replyingTo }),
+      replyTo: replyingTo || null,
     };
 
     try {
@@ -439,7 +601,15 @@ export function ChatScreen({
       batch.set(
         senderChatRef,
         {
+          id: friend.id,
+          name: friend?.name ?? 'Unknown',
+          surname: friend?.surname ?? '',
+          avatar: friend?.avatar ?? 'https://via.placeholder.com/50',
+          email: friend?.email ?? '',
+          online: friend?.online ?? false,
+          lastSeen: friend?.lastSeen,
           lastMessage: messageData,
+          pushToken: friend?.pushToken ?? null,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -455,8 +625,16 @@ export function ChatScreen({
       batch.set(
         friendChatRef,
         {
+          id: user.id,
+          name: user?.name ?? 'Unknown',
+          surname: user?.surname ?? '',
+          avatar: user?.avatar ?? 'https://via.placeholder.com/50',
+          email: user?.email ?? '',
+          online: user?.online ?? false,
+          lastSeen: user?.lastSeen,
           lastMessage: messageData,
           unreadCount: increment(1),
+          pushToken: user?.pushToken,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -464,7 +642,7 @@ export function ChatScreen({
 
       await batch.commit();
 
-      if (friend.pushToken) {
+      if (friend.pushToken && friend.pushToken !== currentUser.pushToken) {
         await sendPushNotification(
           friend.pushToken,
           `${user.name} ${user.surname}`,
@@ -475,7 +653,14 @@ export function ChatScreen({
       setReplyingTo(null);
     } catch (error) {
       console.error('Send message error:', error);
+    } finally {
+      setIsSending(false);
     }
+  };
+
+  const handleForwardMessage = (message: Message) => {
+    setForwardingMessage(message);
+    navigation.navigate('Home');
   };
 
   const handleDeleteMessage = (message: Message) => {
@@ -523,6 +708,8 @@ export function ChatScreen({
                 ? 'typing...'
                 : friend.online
                 ? 'Online'
+                : friend.lastSeen
+                ? formatLastSeen(friend.lastSeen)
                 : 'Offline'}
             </Text>
           </View>
@@ -544,6 +731,7 @@ export function ChatScreen({
               isMe={item.senderId === user.id}
               onReply={setReplyingTo}
               onDelete={handleDeleteMessage}
+              onForward={handleForwardMessage}
               onImagePress={(imageUrl) => {
                 setSelectedImageUrl(imageUrl);
                 setImageViewerVisible(true);
@@ -558,10 +746,10 @@ export function ChatScreen({
         {replyingTo && (
           <View style={styles.replyPreview}>
             <View style={styles.replyContent}>
-              <Text style={styles.replyLabel}>Replying to {replyingTo.senderId === user.id ? 'yourself' : friend.name}</Text>
+              <Text style={styles.replyLabel}>Replying to {replyingTo.senderId === user.id ? 'yourself' : (friend?.name ?? 'Friend')}</Text>
               <Text style={styles.replyText} numberOfLines={1}>
                 {replyingTo.type === 'text'
-                  ? replyingTo.text
+                  ? (replyingTo.text ?? '')
                   : `[${replyingTo.type.toUpperCase()}]`}
               </Text>
             </View>
@@ -630,7 +818,8 @@ export function ChatScreen({
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleSendMessage}
-                style={styles.sendButton}
+                style={[styles.sendButton, (isSending || !inputText.trim()) && { opacity: 0.5 }]}
+                disabled={isSending || !inputText.trim()}
               >
                 <Send size={24} color="#FFF" />
               </TouchableOpacity>

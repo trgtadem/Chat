@@ -29,9 +29,12 @@ import { auth, db } from '../../firebaseConfig';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendEmailVerification,
+  signOut,
 } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
+import { User } from '../types';
 import { COLORS, baseStyles } from '../styles/baseStyles';
 
 type RootStackParamList = {
@@ -57,6 +60,11 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setErrorMessage(null);
     }, 3000);
+  };
+
+  const isValidEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
   };
 
   const registerForPushNotificationsAsync = async () => {
@@ -91,47 +99,58 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
   };
 
   const handleRegister = async () => {
-    if (!email || !password || !name || !surname) {
-      showError('Lütfen tüm alanları doldurun.');
-      return;
-    }
-    if (password !== confirmPassword) {
-      showError('Şifreler birbiriyle uyuşmuyor!');
-      return;
-    }
-    if (password.length < 6) {
-      showError('Şifre en az 6 karakter olmalı.');
-      return;
-    }
+  // 1. Boş alan kontrolü
+  if (!email || !password || !name || !surname) {
+    showError('Lütfen tüm alanları doldurun.');
+    return;
+  }
 
-    setLoading(true);
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const uid = userCredential.user.uid;
-      const avatarUrl = `https://i.pravatar.cc/150?u=${uid}`;
-      const token = await registerForPushNotificationsAsync();
+  setLoading(true);
+  try {
+    // 2. Kullanıcıyı oluştur (Firebase otomatik giriş yapar)
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
 
-      const newUser: User = {
-        id: uid,
-        name: name.trim(),
-        surname: surname.trim(),
-        email: email.trim(),
-        avatar: avatarUrl,
-        online: true,
-        pushToken: token || '',
-      };
+    // 3. Doğrulama mailini gönder
+    await sendEmailVerification(user);
 
-      await setDoc(doc(db, 'users', uid), newUser);
-      // onLoginSuccess(newUser) çağrısı App.tsx'deki onAuthStateChanged listener tarafından yönetilecek
-    } catch (error: any) {
-      console.error(error);
-      let msg = 'Kayıt hatası.';
-      if (error.code === 'auth/email-already-in-use') msg = 'Bu email zaten kullanımda.';
-      showError(msg);
-    } finally {
-      setLoading(false);
+    // 4. KRİTİK NOKTA: Veritabanına yazma işlemi (Hala giriş yapmış durumdayız)
+    // await kullanmazsan kod beklemez, hemen alt satıra geçer ve hata alırsın!
+    await setDoc(doc(db, 'users', user.uid), {
+      id: user.uid,
+      email: user.email ?? '',
+      name: name.trim(),
+      surname: surname.trim(),
+      avatar: `https://ui-avatars.com/api/?name=${name}+${surname}&background=random`,
+      createdAt: serverTimestamp(),
+      about: 'Merhaba, ben ChatApp kullanıyorum!',
+      online: false,
+      lastSeen: serverTimestamp(),
+    });
+
+    // 5. Veritabanı işlemi BİTTİKTEN SONRA çıkış yap
+    await signOut(auth);
+
+    // 6. Kullanıcıya bilgi ver ve Login ekranına dön
+    Alert.alert(
+      'Kayıt Başarılı',
+      'Doğrulama maili gönderildi. Lütfen mailinizi onaylayıp giriş yapın.',
+      [{ text: 'Tamam', onPress: () => setIsLoginMode(true) }]
+    );
+
+  } catch (error: any) {
+    // Hata yönetimi
+    if (error.code === 'auth/email-already-in-use') {
+      showError('Bu email adresi zaten kullanımda.');
+    } else if (error.code === 'permission-denied') {
+      showError('Veritabanı yazma izni reddedildi. Lütfen internetinizi kontrol edin.');
+    } else {
+      showError('Kayıt hatası: ' + error.message);
     }
-  };
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -140,10 +159,65 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
     }
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const user = userCredential.user;
+      
+      // Email doğrulaması kontrol et
+      if (!user.emailVerified) {
+        // Hemen çıkış yapma, alert'e devam et
+        Alert.alert(
+          'Email Doğrulanmadı',
+          'Giriş yapabilmek için email adresinizi doğrulamanız gerekiyor. Doğrulama mailini tekrar göndermek ister misiniz?',
+          [
+            {
+              text: 'İptal',
+              onPress: async () => {
+                // İptal edilince çıkış yap
+                await signOut(auth);
+                setLoading(false);
+              },
+              style: 'cancel',
+            },
+            {
+              text: 'Tekrar Gönder',
+              onPress: async () => {
+                try {
+                  // Mail yeniden gönder
+                  await sendEmailVerification(user);
+                  
+                  // Başarılı mesajı göster
+                  Alert.alert(
+                    'Mail Gönderildi',
+                    'Doğrulama mailini kontrol edin ve mailinizi onaylayıp tekrar giriş yapın.'
+                  );
+                  
+                  // Oturumu kapat
+                  await signOut(auth);
+                } catch (error: any) {
+                  showError('Mail gönderilirken hata oluştu: ' + error.message);
+                }
+                setLoading(false);
+              },
+            },
+          ]
+        );
+        return;
+      }
+      
+      // Email doğrulandı, normal giriş akışı devam eder
+      // App.tsx'deki onAuthStateChanged listener bunu otomatik olarak yönetecek
     } catch (error: any) {
-      // Firebase'den gelen asıl hata mesajını göster
-      showError(error.message);
+      let errorMsg = 'Giriş yapılırken bir hata oluştu. Lütfen tekrar deneyin.';
+      
+      if (
+        error.code === 'auth/invalid-credential' ||
+        error.code === 'auth/user-not-found' ||
+        error.code === 'auth/wrong-password'
+      ) {
+        errorMsg = 'Email veya şifre hatalı.';
+      }
+      
+      showError(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -175,6 +249,7 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                     placeholderTextColor="#666"
                     value={name}
                     onChangeText={setName}
+                    autoCapitalize="words"
                   />
                 </View>
                 <View style={styles.inputWrapperAuth}>
@@ -185,6 +260,7 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                     placeholderTextColor="#666"
                     value={surname}
                     onChangeText={setSurname}
+                    autoCapitalize="words"
                   />
                 </View>
               </>

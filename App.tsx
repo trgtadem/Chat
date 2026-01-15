@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -28,7 +28,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 
-import { User } from './src/types';
+import { User, Message } from './src/types';
 import { COLORS, baseStyles } from './src/styles/baseStyles';
 
 import { AuthScreen } from './src/screens/AuthScreen';
@@ -38,19 +38,22 @@ import { ProfileScreen } from './src/screens/ProfileScreen';
 
 // Notification Handler Setup
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async () => {
+    const isForeground = AppState.currentState === 'active';
+    return {
+      shouldShowAlert: !isForeground,
+      shouldPlaySound: !isForeground,
+      shouldSetBadge: false,
+      shouldShowBanner: !isForeground,
+      shouldShowList: true,
+    };
+  },
 });
 
 type RootStackParamList = {
   Auth: undefined;
   Home: undefined;
-  Chat: { user: User; friend: User };
+  Chat: { user: User; friend: User; forwardingMessage?: Message };
   Profile: { user: User };
 };
 
@@ -95,6 +98,21 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Logout işlemi
+  const handleLogout = async () => {
+    try {
+      if (currentUser?.id) {
+        await updateDoc(doc(db, 'users', currentUser.id), {
+          online: false,
+          lastSeen: serverTimestamp(),
+        });
+      }
+      await signOut(auth);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
   // Handle AppState changes for online/offline status
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState) => {
@@ -130,10 +148,15 @@ export default function App() {
           const userDoc = await getDoc(doc(db, 'users', authUser.uid));
           if (userDoc.exists()) {
             const userData = userDoc.data() as User;
+            
+            // ID alanını döküman ID'den al eğer yoksa
+            if (!userData.id) {
+              userData.id = authUser.uid;
+            }
 
             // Update push token if changed
             const newToken = await registerForPushNotificationsAsync();
-            if (newToken && newToken !== userData.pushToken) {
+            if (newToken && newToken !== userData?.pushToken) {
               await updateDoc(doc(db, 'users', authUser.uid), {
                 pushToken: newToken,
               });
@@ -182,7 +205,20 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer>
+        <NavigationContainer
+          theme={{
+            ...DarkTheme,
+            colors: {
+              ...DarkTheme.colors,
+              primary: COLORS.primary,
+              background: COLORS.background,
+              card: COLORS.surface,
+              text: COLORS.textPrimary,
+              border: COLORS.border,
+              notification: COLORS.error,
+            },
+          }}
+        >
           <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
           <Stack.Navigator
             screenOptions={{
@@ -198,17 +234,7 @@ export default function App() {
                   {(props) => (
                     <HomeScreen
                       currentUser={currentUser}
-                      onLogout={async () => {
-                        try {
-                          await updateDoc(doc(db, 'users', currentUser.id), {
-                            online: false,
-                            lastSeen: serverTimestamp(),
-                          });
-                          await signOut(auth);
-                        } catch (error) {
-                          console.error(error);
-                        }
-                      }}
+                      onLogout={handleLogout}
                       {...props}
                     />
                   )}
@@ -232,6 +258,7 @@ export default function App() {
                     <ProfileScreen
                       currentUser={currentUser}
                       onUserUpdate={setCurrentUser}
+                      onLogout={handleLogout}
                       {...props}
                     />
                   )}

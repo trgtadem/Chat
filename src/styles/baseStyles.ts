@@ -1,17 +1,20 @@
 import { StyleSheet } from 'react-native';
 
 export const COLORS = {
-  background: '#111B21',
-  surface: '#202C33',
-  primary: '#00A884',
-  textPrimary: '#E9EDEF',
-  textSecondary: '#8696A0',
-  inputBackground: '#2A3942',
-  error: '#CF6679',
-  success: '#00A884',
-  read: '#53BDEB',
-  myMessageBubble: '#005C4B',
-  theirMessageBubble: '#202C33',
+  // Mavi tonları - Modern ve özgün tasarım
+  background: '#0A1628',        // Koyu mavi arka plan
+  surface: '#1A2332',            // Yüzey rengi (biraz daha açık mavi-gri)
+  primary: '#3B82F6',           // Parlak mavi (ana renk - butonlar, vurgular)
+  textPrimary: '#E8F0F8',       // Açık mavi-beyaz metin
+  textSecondary: '#94A3B8',      // Gri-mavi ikincil metin
+  inputBackground: '#1E293B',     // Input arka planı (koyu mavi-gri)
+  error: '#EF4444',              // Kırmızı hata rengi
+  success: '#10B981',            // Yeşil başarı rengi
+  read: '#60A5FA',               // Okundu işareti için açık mavi
+  myMessageBubble: '#2563EB',    // Kendi mesajlarımız için koyu mavi
+  theirMessageBubble: '#1E293B', // Karşı taraf mesajları için koyu yüzey
+  accent: '#60A5FA',             // Vurgu rengi (açık mavi)
+  border: '#334155',             // Kenarlık rengi
 };
 
 export const baseStyles = StyleSheet.create({
@@ -53,7 +56,7 @@ export const baseStyles = StyleSheet.create({
     alignItems: 'center',
   },
   buttonText: {
-    color: '#000',
+    color: '#FFFFFF', // Mavi arka plan üzerinde beyaz metin daha okunabilir
     fontSize: 16,
     fontWeight: 'bold',
   },

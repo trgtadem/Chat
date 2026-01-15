@@ -21,12 +21,14 @@ export const SwipeableMessage = ({
   isMe,
   onReply,
   onDelete,
+  onForward,
   onImagePress,
 }: {
   item: Message;
   isMe: boolean;
   onReply: (message: Message) => void;
   onDelete: (message: Message) => void;
+  onForward?: (message: Message) => void;
   onImagePress: (imageUrl: string) => void;
 }) => {
   const [audioPlaying, setAudioPlaying] = useState(false);
@@ -66,6 +68,14 @@ export const SwipeableMessage = ({
       >
         <Text style={styles.actionText}>Reply</Text>
       </TouchableOpacity>
+      {onForward && (
+        <TouchableOpacity
+          style={[styles.actionButton, styles.forwardButton]}
+          onPress={() => onForward(item)}
+        >
+          <Text style={styles.actionText}>Forward</Text>
+        </TouchableOpacity>
+      )}
       {isMe && (
         <TouchableOpacity
           style={[styles.actionButton, styles.deleteButton]}
@@ -123,13 +133,13 @@ export const SwipeableMessage = ({
               {audioPlaying ? (
                 <ActivityIndicator
                   size="small"
-                  color={isMe ? '#000' : '#FFF'}
+                  color={isMe ? '#FFFFFF' : '#FFFFFF'}
                 />
               ) : (
                 <Play
                   size={20}
-                  color={isMe ? '#000' : '#FFF'}
-                  fill={isMe ? '#000' : '#FFF'}
+                  color={isMe ? '#FFFFFF' : '#FFFFFF'}
+                  fill={isMe ? '#FFFFFF' : '#FFFFFF'}
                 />
               )}
             </TouchableOpacity>
@@ -140,7 +150,7 @@ export const SwipeableMessage = ({
       case 'file':
         return (
           <View style={styles.fileContainer}>
-            <Download size={24} color={isMe ? '#000' : '#FFF'} />
+            <Download size={24} color={isMe ? '#FFFFFF' : '#FFFFFF'} />
             <View style={{ flex: 1 }}>
               <Text
                 style={styles.fileName}
@@ -155,7 +165,7 @@ export const SwipeableMessage = ({
 
       case 'text':
       default:
-        return <Text style={styles.messageText}>{item.text}</Text>;
+        return <Text style={styles.messageText}>{item.text ?? 'No content'}</Text>;
     }
   };
 
@@ -181,8 +191,8 @@ export const SwipeableMessage = ({
                 numberOfLines={1}
               >
                 {item.replyTo.type === 'text'
-                  ? item.replyTo.text
-                  : `[${item.replyTo.type.toUpperCase()}]`}
+                  ? (item.replyTo.text ?? '')
+                  : `[${(item.replyTo.type ?? 'file').toUpperCase()}]`}
               </Text>
             </View>
           </View>
@@ -261,11 +271,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     justifyContent: 'center',
   },
+  forwardButton: {
+    backgroundColor: COLORS.accent,
+  },
   deleteButton: {
     backgroundColor: '#CF6679',
   },
   actionText: {
-    color: '#000',
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
   },

@@ -25,4 +25,6 @@ export type Message = {
   fileName?: string;
   replyTo?: Message;
   isDeleted?: boolean;
+  forwarded?: boolean;
+  forwardedFrom?: string;
 };
