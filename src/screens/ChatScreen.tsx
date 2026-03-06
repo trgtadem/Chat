@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,11 +14,11 @@ import {
   PanResponder,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft, Paperclip, Send, Plus, Mic, MoreVertical } from 'lucide-react-native';
+import { ChevronLeft, Paperclip, Send, Plus, Mic, MoreVertical, Search, X as XIcon } from 'lucide-react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as Audio from 'expo-av';
+import * as AudioModule from 'expo-audio';
 import ImageViewing from 'react-native-image-viewing';
 import {
   collection,
@@ -31,6 +31,8 @@ import {
   serverTimestamp,
   updateDoc,
   setDoc,
+  limit,
+  limitToLast,
 } from 'firebase/firestore';
 
 import { db } from '../../firebaseConfig';
@@ -38,9 +40,12 @@ import { User, Message } from '../types';
 import { COLORS } from '../styles/baseStyles';
 import { getChatId, formatTime, formatLastSeen, sendPushNotification } from '../utils';
 import { SwipeableMessage } from '../components/SwipeableMessage';
+import { useAppContext } from '../context/AppContext';
 
 type RootStackParamList = {
-  Chat: { user: User; friend: User };
+  Home: undefined;
+  Chat: { user: User; friend: User; forwardingMessage?: Message };
+  Profile: { user: User };
 };
 
 type ChatScreenProps = NativeStackScreenProps<RootStackParamList, 'Chat'>;
@@ -48,12 +53,11 @@ type ChatScreenProps = NativeStackScreenProps<RootStackParamList, 'Chat'>;
 export function ChatScreen({
   route,
   navigation,
-  currentUser,
 }: {
   route: ChatScreenProps['route'];
   navigation: ChatScreenProps['navigation'];
-  currentUser: User;
 }) {
+  const { currentUser } = useAppContext();
   const { user, friend, forwardingMessage: routeForwardingMessage } = route.params;
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -68,16 +72,33 @@ export function ChatScreen({
   const [messagesWithImages, setMessagesWithImages] = useState<string[]>([]);
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
   const [isSending, setIsSending] = useState(false);
+  // Search
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  // Pagination
+  const [msgLimit, setMsgLimit] = useState(30);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
 
   const flatListRef = useRef<FlatList>(null);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recorderRef = useRef<AudioModule.AudioRecorder | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
+
+  // Filtered messages for search
+  const filteredMessages = useMemo(() => {
+    if (!searchQuery.trim()) return messages;
+    const q = searchQuery.toLowerCase();
+    return messages.filter((msg) =>
+      msg.type === 'text' && msg.text && msg.text.toLowerCase().includes(q)
+    );
+  }, [messages, searchQuery]);
+
+  if (!currentUser) return null;
+
   if (!user?.id || !friend?.id) {
     console.error('User or friend ID is missing');
-    return <Text style={{color: 'red'}}>Error: Missing user information</Text>;
+    return <Text style={{ color: 'red' }}>Error: Missing user information</Text>;
   }
-  
+
   const chatId = getChatId(user.id, friend.id);
 
   // Handle forwarding message from route params
@@ -181,10 +202,11 @@ export function ChatScreen({
     });
   }, [navigation]);
 
-  // Listen to messages
+  // Listen to messages with pagination
   useEffect(() => {
+    if (!user?.id || !friend?.id) return;
     const messagesRef = collection(db, 'chats', chatId, 'messages');
-    const q = query(messagesRef, orderBy('createdAt', 'asc'));
+    const q = query(messagesRef, orderBy('createdAt', 'asc'), limitToLast(msgLimit));
 
     const unsubscribe = onSnapshot(
       q,
@@ -194,37 +216,39 @@ export function ChatScreen({
           ...doc.data(),
         } as Message));
         setMessages(msgs);
+        // hasMore: ilk yükleme boyuna eşit mesaj geldiyse daha eski mesaj vardır
+        setHasMoreMessages(snapshot.docs.length >= msgLimit);
 
         // Extract image URLs for image viewer
         const imageUrls = msgs
           .filter((msg) => msg.type === 'image' && msg.imageUrl)
-        .map((msg) => msg.imageUrl!);
-      setMessagesWithImages(imageUrls);
+          .map((msg) => msg.imageUrl!);
+        setMessagesWithImages(imageUrls);
 
-      setTimeout(
-        () => flatListRef.current?.scrollToEnd({ animated: true }),
-        100
-      );
+        setTimeout(
+          () => flatListRef.current?.scrollToEnd({ animated: true }),
+          100
+        );
 
-      // Mark messages as read
-      const unreadMessages = snapshot.docs.filter(
-        (doc) => doc.data().senderId !== user.id && doc.data().status === 'sent'
-      );
+        // Mark messages as read
+        const unreadMessages = snapshot.docs.filter(
+          (doc) => doc.data().senderId !== user.id && doc.data().status === 'sent'
+        );
 
-      if (unreadMessages.length > 0) {
-        const batch = writeBatch(db);
-        unreadMessages.forEach((docSnap) => {
-          batch.update(
-            doc(db, 'chats', chatId, 'messages', docSnap.id),
-            { status: 'read' }
-          );
-        });
+        if (unreadMessages.length > 0) {
+          const batch = writeBatch(db);
+          unreadMessages.forEach((docSnap) => {
+            batch.update(
+              doc(db, 'chats', chatId, 'messages', docSnap.id),
+              { status: 'read' }
+            );
+          });
 
-        const userChatRef = doc(db, 'users', user.id, 'userChats', friend.id);
-        batch.update(userChatRef, { unreadCount: 0 });
+          const userChatRef = doc(db, 'users', user.id, 'userChats', friend.id);
+          batch.update(userChatRef, { unreadCount: 0 });
 
-        batch.commit();
-      }
+          batch.commit();
+        }
       },
       (error) => {
         console.error('Error fetching messages:', error?.message || error?.code || error);
@@ -232,7 +256,11 @@ export function ChatScreen({
     );
 
     return () => unsubscribe();
-  }, [chatId, user.id]);
+  }, [chatId, user.id, msgLimit]);   // msgLimit değişince yeniden abone ol
+
+  const loadOlderMessages = () => {
+    setMsgLimit((prev) => prev + 30);
+  };
 
   // Listen to typing status
   useEffect(() => {
@@ -352,45 +380,26 @@ export function ChatScreen({
 
   const startRecording = async () => {
     try {
-      // Request microphone permissions first
-      if (Audio.getPermissionsAsync) {
-        const { status } = await Audio.getPermissionsAsync();
-        if (status !== 'granted') {
-          if (Audio.requestPermissionsAsync) {
-            const { status: newStatus } = await Audio.requestPermissionsAsync();
-            if (newStatus !== 'granted') {
-              Alert.alert(
-                'Permission required',
-                'You need to grant microphone permissions to record audio.'
-              );
-              return;
-            }
-          } else {
-            Alert.alert(
-              'Permission required',
-              'Microphone permissions are required for recording.'
-            );
-            return;
-          }
-        }
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'Permission required',
+          'You need to grant microphone permissions to record audio.'
+        );
+        return;
       }
 
-      // Set audio mode
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
+      await AudioModule.AudioModule.setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
       });
 
-      const recording = new Audio.Recording();
-      await recording.prepareToRecordAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      const recorder = AudioModule.AudioModule.createRecorder(
+        AudioModule.RecordingPresets.HIGH_QUALITY
       );
-      await recording.startAsync();
 
-      recordingRef.current = recording;
+      await recorder.record();
+      recorderRef.current = recorder;
       setIsRecording(true);
       setRecordingDuration(0);
 
@@ -400,7 +409,7 @@ export function ChatScreen({
 
       // Auto stop after 60 seconds
       setTimeout(() => {
-        if (recordingRef.current) {
+        if (recorderRef.current && recorderRef.current.isRecording) {
           stopRecording();
         }
         clearInterval(interval);
@@ -412,13 +421,13 @@ export function ChatScreen({
   };
 
   const stopRecording = async () => {
-    if (!recordingRef.current) return;
+    if (!recorderRef.current) return;
 
     try {
       setIsRecording(false);
-      await recordingRef.current.stopAndUnloadAsync();
-      const uri = recordingRef.current.getURI();
-      recordingRef.current = null;
+      await recorderRef.current.stop();
+      const uri = recorderRef.current.uri;
+      recorderRef.current = null;
       setRecordingDuration(0);
 
       if (uri) {
@@ -665,7 +674,7 @@ export function ChatScreen({
 
   const handleDeleteMessage = (message: Message) => {
     Alert.alert('Delete Message', 'Delete this message for everyone?', [
-      { text: 'Cancel', onPress: () => {} },
+      { text: 'Cancel', onPress: () => { } },
       {
         text: 'Delete',
         onPress: async () => {
@@ -692,55 +701,108 @@ export function ChatScreen({
       >
         {/* Chat Header */}
         <View style={styles.chatHeader}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={{ padding: 8 }}
-          >
-            <ChevronLeft size={28} color={COLORS.textPrimary} />
-          </TouchableOpacity>
-          <Image source={{ uri: friend.avatar }} style={styles.chatAvatar} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.chatTitle}>
-              {friend.name} {friend.surname}
-            </Text>
-            <Text style={{ color: COLORS.textSecondary, fontSize: 12 }}>
-              {friendIsTyping
-                ? 'typing...'
-                : friend.online
-                ? 'Online'
-                : friend.lastSeen
-                ? formatLastSeen(friend.lastSeen)
-                : 'Offline'}
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Profile', { user: currentUser })}
-            style={{ padding: 8 }}
-          >
-            <MoreVertical size={24} color={COLORS.textPrimary} />
-          </TouchableOpacity>
+          {isSearching ? (
+            /* Search Mode Header */
+            <>
+              <TouchableOpacity
+                onPress={() => { setIsSearching(false); setSearchQuery(''); }}
+                style={{ padding: 8 }}
+              >
+                <XIcon size={24} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Mesajlarda ara..."
+                placeholderTextColor={COLORS.textSecondary}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+              />
+              {searchQuery.length > 0 && (
+                <Text style={styles.searchResultCount}>
+                  {filteredMessages.length} sonuç
+                </Text>
+              )}
+            </>
+          ) : (
+            /* Normal Header */
+            <>
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                style={{ padding: 8 }}
+              >
+                <ChevronLeft size={28} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+              <Image source={{ uri: friend.avatar }} style={styles.chatAvatar} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.chatTitle}>
+                  {friend.name} {friend.surname}
+                </Text>
+                <Text style={{ color: COLORS.textSecondary, fontSize: 12 }}>
+                  {friendIsTyping
+                    ? 'typing...'
+                    : friend.online
+                      ? 'Online'
+                      : friend.lastSeen
+                        ? formatLastSeen(friend.lastSeen)
+                        : 'Offline'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setIsSearching(true)}
+                style={{ padding: 8 }}
+              >
+                <Search size={22} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('Profile', { user: currentUser })}
+                style={{ padding: 8 }}
+              >
+                <MoreVertical size={24} color={COLORS.textPrimary} />
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         {/* Messages List */}
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          renderItem={({ item }) => (
-            <SwipeableMessage
-              item={item}
-              isMe={item.senderId === user.id}
-              onReply={setReplyingTo}
-              onDelete={handleDeleteMessage}
-              onForward={handleForwardMessage}
-              onImagePress={(imageUrl) => {
-                setSelectedImageUrl(imageUrl);
-                setImageViewerVisible(true);
-              }}
-            />
-          )}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ padding: 16, paddingBottom: 20 }}
-        />
+        {isSearching && searchQuery.length > 0 && filteredMessages.length === 0 ? (
+          <View style={styles.emptySearch}>
+            <Search size={40} color={COLORS.textSecondary} style={{ marginBottom: 12 }} />
+            <Text style={styles.emptySearchText}>Sonuç bulunamadı</Text>
+            <Text style={{ color: COLORS.textSecondary, fontSize: 13 }}>"{searchQuery}" için eşleşme yok</Text>
+          </View>
+        ) : (
+          <FlatList
+            ref={flatListRef}
+            data={filteredMessages}
+            ListHeaderComponent={
+              hasMoreMessages && !isSearching ? (
+                <TouchableOpacity
+                  onPress={loadOlderMessages}
+                  style={styles.loadMoreButton}
+                >
+                  <Text style={styles.loadMoreText}>↑ Daha eski mesajları yükle</Text>
+                </TouchableOpacity>
+              ) : null
+            }
+            renderItem={({ item }) => (
+              <SwipeableMessage
+                item={item}
+                isMe={item.senderId === user.id}
+                onReply={setReplyingTo}
+                onDelete={handleDeleteMessage}
+                onForward={handleForwardMessage}
+                onImagePress={(imageUrl) => {
+                  setSelectedImageUrl(imageUrl);
+                  setImageViewerVisible(true);
+                }}
+                searchQuery={searchQuery}
+              />
+            )}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={{ padding: 16, paddingBottom: 20 }}
+          />
+        )}
 
         {/* Reply Preview */}
         {replyingTo && (
@@ -949,5 +1011,44 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: COLORS.textSecondary,
     paddingHorizontal: 8,
+  },
+  loadMoreButton: {
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadMoreText: {
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // ─── Search ──────────────────────────────────────────────────────────────
+  searchInput: {
+    flex: 1,
+    height: 40,
+    paddingHorizontal: 12,
+    backgroundColor: COLORS.inputBackground,
+    borderRadius: 20,
+    color: COLORS.textPrimary,
+    fontSize: 16,
+    marginHorizontal: 4,
+  },
+  searchResultCount: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    minWidth: 48,
+    textAlign: 'right',
+    paddingRight: 4,
+  },
+  emptySearch: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptySearchText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: 6,
   },
 });

@@ -21,6 +21,7 @@ import { db } from '../../firebaseConfig';
 import { User } from '../types';
 import { COLORS, baseStyles } from '../styles/baseStyles';
 import { doc, updateDoc } from 'firebase/firestore';
+import { useAppContext } from '../context/AppContext';
 
 type RootStackParamList = {
   Profile: { user: User };
@@ -31,16 +32,11 @@ type ProfileScreenProps = NativeStackScreenProps<RootStackParamList, 'Profile'>;
 export function ProfileScreen({
   route,
   navigation,
-  currentUser,
-  onUserUpdate,
-  onLogout,
 }: {
   route: ProfileScreenProps['route'];
   navigation: ProfileScreenProps['navigation'];
-  currentUser: User;
-  onUserUpdate: (user: User) => void;
-  onLogout: () => Promise<void>;
 }) {
+  const { currentUser, setCurrentUser, handleLogout } = useAppContext();
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(currentUser?.name ?? 'Unknown');
   const [surname, setSurname] = useState(currentUser?.surname ?? '');
@@ -48,14 +44,15 @@ export function ProfileScreen({
   const [avatar, setAvatar] = useState(currentUser?.avatar ?? 'https://via.placeholder.com/100');
   const [loading, setLoading] = useState(false);
 
+  // currentUser henüz yüklenmediyse null döndür
+  if (!currentUser) return null;
+
   useLayoutEffect(() => {
     navigation.setOptions({
       headerShown: true,
       headerTitle: 'Profile',
       headerStyle: {
         backgroundColor: COLORS.background,
-        borderBottomColor: COLORS.surface,
-        borderBottomWidth: 1,
       },
       headerTintColor: COLORS.textPrimary,
       headerTitleStyle: {
@@ -88,13 +85,13 @@ export function ProfileScreen({
       [
         {
           text: 'Vazgeç',
-          onPress: () => {},
+          onPress: () => { },
           style: 'cancel',
         },
         {
           text: 'Çıkış Yap',
           onPress: () => {
-            onLogout();
+            handleLogout();
           },
           style: 'destructive',
         },
@@ -191,7 +188,7 @@ export function ProfileScreen({
         ...updateData,
       };
 
-      onUserUpdate(updatedUser);
+      setCurrentUser(updatedUser);
       setIsEditing(false);
 
       Alert.alert('Success', 'Profile updated successfully.');

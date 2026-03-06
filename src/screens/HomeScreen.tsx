@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,35 +23,35 @@ import {
 import { db } from '../../firebaseConfig';
 import { User } from '../types';
 import { COLORS } from '../styles/baseStyles';
+import { useAppContext } from '../context/AppContext';
 
 import { FriendItem } from '../components/FriendItem';
 
 type RootStackParamList = {
   Home: undefined;
-  Chat: { user: User; friend: User };
+  Chat: { user: User; friend: User; forwardingMessage?: any };
   Profile: { user: User };
 };
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 export function HomeScreen({
-  currentUser,
-  onLogout,
   navigation,
   forwardingMessage,
   onForwardComplete,
 }: {
-  currentUser: User;
-  onLogout: () => void;
   navigation: HomeScreenProps['navigation'];
   forwardingMessage?: any;
   onForwardComplete?: () => void;
 }) {
+  const { currentUser, handleLogout } = useAppContext();
   const [chats, setChats] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [displayList, setDisplayList] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filteredList, setFilteredList] = useState<any[]>([]);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -140,31 +140,34 @@ export function HomeScreen({
     setDisplayList(combinedList);
   }, [chats, allUsers]);
 
-  // Filter list based on search query
+  // Debounce search — 300ms gecikme
+  const handleSearchChange = (text: string) => {
+    setSearchQuery(text);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      setDebouncedSearch(text);
+    }, 300);
+  };
+
+  // Filter list based on debounced search query
   useEffect(() => {
-    if (!searchQuery.trim()) {
+    if (!debouncedSearch.trim()) {
       setFilteredList(displayList);
       return;
     }
 
-    const query = searchQuery.toLowerCase();
+    const q = debouncedSearch.toLowerCase();
     const filtered = displayList.filter((item) => {
       try {
         const friend = item?.isChat ? item?.friendUser : item;
-        
-        // Güvenli isimler - undefined, null veya olmayan özellikler için varsayılan değer kullan
         const firstName = (friend?.name ?? '').toString().trim().toLowerCase();
         const lastName = (friend?.surname ?? '').toString().trim().toLowerCase();
         const fullName = `${firstName} ${lastName}`.trim();
-        
-        // Güvenli son mesaj - lastMessage null/undefined olabilir
         let lastMessageText = '';
         if (item?.isChat && item?.lastMessage) {
           lastMessageText = (item.lastMessage.text ?? '').toString().trim().toLowerCase();
         }
-        
-        // Arama yapıldığında her iki alanda da kontrol et
-        return fullName.includes(query) || lastMessageText.includes(query);
+        return fullName.includes(q) || lastMessageText.includes(q);
       } catch (error) {
         console.warn('Filter error:', error);
         return false;
@@ -172,26 +175,29 @@ export function HomeScreen({
     });
 
     setFilteredList(filtered);
-  }, [searchQuery, displayList]);
+  }, [debouncedSearch, displayList]);
 
   const handleSelectChat = (item: any) => {
     const friend: User = item.isChat ? item.friendUser : item;
-    
+
     // If forwarding a message, navigate with forwardingMessage param
     if (forwardingMessage) {
-      navigation.navigate('Chat', { 
-        user: currentUser, 
-        friend, 
-        forwardingMessage 
+      navigation.navigate('Chat', {
+        user: currentUser!,
+        friend,
+        forwardingMessage
       });
       if (onForwardComplete) {
         onForwardComplete();
       }
       return;
     }
-    
-    navigation.navigate('Chat', { user: currentUser, friend });
+
+    navigation.navigate('Chat', { user: currentUser!, friend });
   };
+
+  // currentUser henüz yüklenmediyse boş döndür (App.tsx zaten bekletir)
+  if (!currentUser) return null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -210,7 +216,7 @@ export function HomeScreen({
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity
-            onPress={() => navigation.navigate('Profile', { user: currentUser })}
+            onPress={() => navigation.navigate('Profile', { user: currentUser! })}
             style={{ padding: 8 }}
           >
             <Settings size={24} color={COLORS.primary} />
@@ -220,7 +226,7 @@ export function HomeScreen({
       <View style={styles.sectionTitleContainer}>
         <Text style={styles.sectionTitle}>Chats & People</Text>
       </View>
-      
+
       {/* Search Bar */}
       <View style={styles.searchContainer}>
         <Search size={20} color={COLORS.textSecondary} style={styles.searchIcon} />
@@ -229,7 +235,7 @@ export function HomeScreen({
           placeholder="Search chats and people..."
           placeholderTextColor={COLORS.textSecondary}
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchChange}
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
@@ -281,7 +287,7 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
   },
   headerAvatar: { width: 40, height: 40, borderRadius: 20 },
-  sectionTitleContainer: { 
+  sectionTitleContainer: {
     padding: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',

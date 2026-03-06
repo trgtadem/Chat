@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   ActivityIndicator,
@@ -30,6 +30,9 @@ import {
 
 import { User, Message } from './src/types';
 import { COLORS, baseStyles } from './src/styles/baseStyles';
+
+// Context
+import { AppProvider, useAppContext } from './src/context/AppContext';
 
 import { AuthScreen } from './src/screens/AuthScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -94,11 +97,12 @@ const registerForPushNotificationsAsync = async () => {
   return token;
 };
 
-export default function App() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+// ─── İç uygulama bileşeni — Context'e erişir ─────────────────────────────────
+function AppInner() {
+  const { currentUser, setCurrentUser, setLogoutFn } = useAppContext();
+  const [loading, setLoading] = React.useState(true);
 
-  // Logout işlemi
+  // Logout işlemi — context'e kaydet
   const handleLogout = async () => {
     try {
       if (currentUser?.id) {
@@ -113,7 +117,12 @@ export default function App() {
     }
   };
 
-  // Handle AppState changes for online/offline status
+  // Logout fonksiyonunu context'e kaydet
+  useEffect(() => {
+    setLogoutFn(handleLogout);
+  }, [currentUser]);
+
+  // AppState değişimlerini izle (online/offline)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextAppState) => {
       if (auth.currentUser) {
@@ -139,7 +148,7 @@ export default function App() {
     };
   }, []);
 
-  // Monitor auth state changes
+  // Auth durumu izle
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
       if (authUser) {
@@ -148,13 +157,12 @@ export default function App() {
           const userDoc = await getDoc(doc(db, 'users', authUser.uid));
           if (userDoc.exists()) {
             const userData = userDoc.data() as User;
-            
-            // ID alanını döküman ID'den al eğer yoksa
+
             if (!userData.id) {
               userData.id = authUser.uid;
             }
 
-            // Update push token if changed
+            // Push token güncelle
             const newToken = await registerForPushNotificationsAsync();
             if (newToken && newToken !== userData?.pushToken) {
               await updateDoc(doc(db, 'users', authUser.uid), {
@@ -163,7 +171,6 @@ export default function App() {
               userData.pushToken = newToken;
             }
 
-            // Set online status
             await updateDoc(doc(db, 'users', authUser.uid), { online: true });
 
             setCurrentUser(userData);
@@ -203,77 +210,51 @@ export default function App() {
   }
 
   return (
+    <NavigationContainer
+      theme={{
+        ...DarkTheme,
+        colors: {
+          ...DarkTheme.colors,
+          primary: COLORS.primary,
+          background: COLORS.background,
+          card: COLORS.surface,
+          text: COLORS.textPrimary,
+          border: COLORS.border,
+          notification: COLORS.error,
+        },
+      }}
+    >
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
+      <Stack.Navigator
+        screenOptions={{
+          headerShown: false,
+        }}
+      >
+        {currentUser ? (
+          <>
+            {/* Home — currentUser context'ten geliyor, prop drilling yok */}
+            <Stack.Screen name="Home" component={HomeScreen} />
+            {/* Chat — currentUser context'ten geliyor */}
+            <Stack.Screen name="Chat" component={ChatScreen} />
+            {/* Profile — currentUser context'ten geliyor */}
+            <Stack.Screen name="Profile" component={ProfileScreen} />
+          </>
+        ) : (
+          <Stack.Screen name="Auth" component={AuthScreen} />
+        )}
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+
+// ─── Kök bileşen — AppProvider sarar ─────────────────────────────────────────
+export default function App() {
+  return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <NavigationContainer
-          theme={{
-            ...DarkTheme,
-            colors: {
-              ...DarkTheme.colors,
-              primary: COLORS.primary,
-              background: COLORS.background,
-              card: COLORS.surface,
-              text: COLORS.textPrimary,
-              border: COLORS.border,
-              notification: COLORS.error,
-            },
-          }}
-        >
-          <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
-          <Stack.Navigator
-            screenOptions={{
-              headerShown: false,
-            }}
-          >
-            {currentUser ? (
-              <>
-                <Stack.Screen
-                  name="Home"
-                  options={{}}
-                >
-                  {(props) => (
-                    <HomeScreen
-                      currentUser={currentUser}
-                      onLogout={handleLogout}
-                      {...props}
-                    />
-                  )}
-                </Stack.Screen>
-                <Stack.Screen
-                  name="Chat"
-                  options={{}}
-                >
-                  {(props) => (
-                    <ChatScreen
-                      currentUser={currentUser}
-                      {...props}
-                    />
-                  )}
-                </Stack.Screen>
-                <Stack.Screen
-                  name="Profile"
-                  options={{}}
-                >
-                  {(props) => (
-                    <ProfileScreen
-                      currentUser={currentUser}
-                      onUserUpdate={setCurrentUser}
-                      onLogout={handleLogout}
-                      {...props}
-                    />
-                  )}
-                </Stack.Screen>
-              </>
-            ) : (
-              <Stack.Screen
-                name="Auth"
-                options={{}}
-              >
-                {(props) => <AuthScreen {...props} />}
-              </Stack.Screen>
-            )}
-          </Stack.Navigator>
-        </NavigationContainer>
+        <AppProvider>
+          <AppInner />
+        </AppProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

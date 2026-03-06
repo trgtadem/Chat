@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Check, CheckCheck, Play, Download } from 'lucide-react-native';
-import { Audio } from 'expo-av';
+import * as AudioModule from 'expo-audio';
 
 import { Message } from '../types';
 import { COLORS } from '../styles/baseStyles';
@@ -23,6 +23,7 @@ export const SwipeableMessage = ({
   onDelete,
   onForward,
   onImagePress,
+  searchQuery = '',
 }: {
   item: Message;
   isMe: boolean;
@@ -30,30 +31,74 @@ export const SwipeableMessage = ({
   onDelete: (message: Message) => void;
   onForward?: (message: Message) => void;
   onImagePress: (imageUrl: string) => void;
+  searchQuery?: string;
 }) => {
   const [audioPlaying, setAudioPlaying] = useState(false);
-  const [audioPlayer, setAudioPlayer] = useState<Audio.Sound | null>(null);
+  const [audioPlayer, setAudioPlayer] = useState<AudioModule.AudioPlayer | null>(null);
+
+  // Render text with highlighted search matches
+  const renderHighlightedText = (text: string) => {
+    if (!searchQuery.trim()) {
+      return <Text style={styles.messageText}>{text}</Text>;
+    }
+    const lowerText = text.toLowerCase();
+    const lowerQuery = searchQuery.toLowerCase();
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let index = lowerText.indexOf(lowerQuery);
+    while (index !== -1) {
+      if (index > lastIndex) {
+        parts.push(
+          <Text key={`t-${lastIndex}`} style={styles.messageText}>
+            {text.slice(lastIndex, index)}
+          </Text>
+        );
+      }
+      parts.push(
+        <Text key={`h-${index}`} style={[styles.messageText, styles.highlightedText]}>
+          {text.slice(index, index + searchQuery.length)}
+        </Text>
+      );
+      lastIndex = index + searchQuery.length;
+      index = lowerText.indexOf(lowerQuery, lastIndex);
+    }
+    if (lastIndex < text.length) {
+      parts.push(
+        <Text key={`t-${lastIndex}`} style={styles.messageText}>
+          {text.slice(lastIndex)}
+        </Text>
+      );
+    }
+    return <Text>{parts}</Text>;
+  };
 
   const playAudio = async () => {
     try {
       if (audioPlayer) {
-        await audioPlayer.pauseAsync();
-        setAudioPlaying(false);
+        if (audioPlaying) {
+          audioPlayer.pause();
+          setAudioPlaying(false);
+        } else {
+          audioPlayer.play();
+          setAudioPlaying(true);
+        }
         return;
       }
 
-      const { sound } = await Audio.Sound.createAsync({ uri: item.audioUrl! });
-      setAudioPlayer(sound);
+      if (!item.audioUrl) return;
+
+      const player = AudioModule.AudioModule.createPlayer(item.audioUrl);
+      setAudioPlayer(player);
       setAudioPlaying(true);
 
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
+      player.addListener('playbackStatusUpdate', (status: any) => {
+        if (status.didJustFinish) {
           setAudioPlaying(false);
           setAudioPlayer(null);
         }
       });
 
-      await sound.playAsync();
+      player.play();
     } catch (error) {
       console.error('Playback error:', error);
       Alert.alert('Error', 'Failed to play audio.');
@@ -165,7 +210,7 @@ export const SwipeableMessage = ({
 
       case 'text':
       default:
-        return <Text style={styles.messageText}>{item.text ?? 'No content'}</Text>;
+        return renderHighlightedText(item.text ?? 'No content');
     }
   };
 
@@ -211,8 +256,8 @@ export const SwipeableMessage = ({
                 item.type === 'image'
                   ? 'transparent'
                   : isMe
-                  ? COLORS.myMessageBubble
-                  : COLORS.theirMessageBubble,
+                    ? COLORS.myMessageBubble
+                    : COLORS.theirMessageBubble,
             },
           ]}
         >
@@ -323,6 +368,11 @@ const styles = StyleSheet.create({
   messageText: {
     color: '#FFF',
     fontSize: 16,
+  },
+  highlightedText: {
+    backgroundColor: 'rgba(255, 220, 0, 0.5)',
+    color: '#000',
+    borderRadius: 3,
   },
   deletedText: {
     color: COLORS.textSecondary,
