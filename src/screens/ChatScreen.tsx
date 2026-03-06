@@ -319,6 +319,25 @@ export function ChatScreen({
     }
   };
 
+  const deleteFromCloudinary = async (fileUrl: string): Promise<void> => {
+    try {
+      // Cloudinary allows deleting files via its Admin API or by using a signature.
+      // ⚠️ DO NOT include your API_SECRET in the client.
+      // For security, you should have a backend function (Firebase Cloud Function)
+      // that handles this deletion and call it here.
+
+      const parts = fileUrl.split('/');
+      const fileNameWithExtension = parts[parts.length - 1];
+      const publicId = fileNameWithExtension.split('.')[0];
+
+      console.log(`Media deletion requested for public_id: ${publicId}`);
+
+      // Placeholder for actual deletion logic (e.g., via a signed request or Cloud Function)
+    } catch (error) {
+      console.error('Error during media cleanup:', error);
+    }
+  };
+
   const handlePickImage = async () => {
     try {
       const permissionResult =
@@ -679,13 +698,24 @@ export function ChatScreen({
         text: 'Delete',
         onPress: async () => {
           try {
+            // Check for media and cleanup
+            if (message.imageUrl) {
+              await deleteFromCloudinary(message.imageUrl);
+            }
+            if (message.audioUrl) {
+              await deleteFromCloudinary(message.audioUrl);
+            }
+            if (message.fileUrl) {
+              await deleteFromCloudinary(message.fileUrl);
+            }
+
             await updateDoc(
               doc(db, 'chats', chatId, 'messages', message.id),
               { isDeleted: true }
             );
-          } catch (error) {
+          } catch (error: any) {
             console.error('Delete error:', error);
-            Alert.alert('Error', 'Failed to delete message.');
+            Alert.alert('Error', 'Failed to delete message: ' + (error.message || 'Unknown error'));
           }
         },
       },

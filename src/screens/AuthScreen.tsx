@@ -63,6 +63,10 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
   const [resetLoading, setResetLoading] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
 
+  // Email verification status
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [isResending, setIsResending] = useState(false);
+
   const showError = (msg: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setErrorMessage(msg);
@@ -171,36 +175,7 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
 
       // Email doğrulaması kontrol et
       if (!user.emailVerified) {
-        Alert.alert(
-          'Email Doğrulanmadı',
-          'Giriş yapabilmek için email adresinizi doğrulamanız gerekiyor. Doğrulama mailini tekrar göndermek ister misiniz?',
-          [
-            {
-              text: 'İptal',
-              onPress: async () => {
-                await signOut(auth);
-                setLoading(false);
-              },
-              style: 'cancel',
-            },
-            {
-              text: 'Tekrar Gönder',
-              onPress: async () => {
-                try {
-                  await sendEmailVerification(user);
-                  Alert.alert(
-                    'Mail Gönderildi',
-                    'Doğrulama mailini kontrol edin ve mailinizi onaylayıp tekrar giriş yapın.'
-                  );
-                  await signOut(auth);
-                } catch (error: any) {
-                  showError('Mail gönderilirken hata oluştu: ' + error.message);
-                }
-                setLoading(false);
-              },
-            },
-          ]
-        );
+        setNeedsVerification(true);
         return;
       }
 
@@ -221,6 +196,28 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleResendVerification = async () => {
+    if (!auth.currentUser) return;
+    setIsResending(true);
+    try {
+      await sendEmailVerification(auth.currentUser);
+      Alert.alert(
+        'Email Gönderildi',
+        'Doğrulama e-postası tekrar gönderildi. Lütfen gelen kutunuzu (ve gereksiz kutusunu) kontrol edin.'
+      );
+    } catch (error: any) {
+      showError('E-posta gönderilemedi: ' + error.message);
+    } finally {
+      setIsResending(false);
+    }
+  };
+
+  const handleBackToLogin = async () => {
+    await signOut(auth);
+    setNeedsVerification(false);
+    setIsLoginMode(true);
   };
 
   // ─── Forgot Password ────────────────────────────────────────────────────────
@@ -337,115 +334,148 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
               <MessageSquare size={64} color={COLORS.primary} />
             </View>
             <Text style={baseStyles.title}>Mesajlar</Text>
-            <Text style={baseStyles.subtitle}>{isLoginMode ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
-            {errorMessage && (
-              <View style={baseStyles.errorContainer}>
-                <AlertCircle color="#FFF" size={20} style={{ marginRight: 8 }} />
-                <Text style={baseStyles.errorText}>{errorMessage}</Text>
+
+            {needsVerification ? (
+              /* Verification UI */
+              <View style={styles.verificationContainer}>
+                <AlertCircle size={48} color={COLORS.error} style={{ marginBottom: 16 }} />
+                <Text style={styles.verificationTitle}>Email Doğrulanmadı</Text>
+                <Text style={styles.verificationText}>
+                  Devam edebilmek için <Text style={{ fontWeight: '700', color: COLORS.textPrimary }}>{email}</Text> adresine gönderilen doğrulama bağlantısına tıklamanız gerekmektedir.
+                </Text>
+
+                <TouchableOpacity
+                  style={[baseStyles.button, { width: '100%', marginBottom: 12 }]}
+                  onPress={handleResendVerification}
+                  disabled={isResending}
+                >
+                  {isResending ? (
+                    <ActivityIndicator color="black" />
+                  ) : (
+                    <Text style={baseStyles.buttonText}>Doğrulama Mailini Tekrar Gönder</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.backToLoginBtn}
+                  onPress={handleBackToLogin}
+                >
+                  <Text style={styles.backToLoginText}>Giriş Ekranına Dön</Text>
+                </TouchableOpacity>
               </View>
-            )}
-            <View style={styles.inputContainer}>
-              {!isLoginMode && (
-                <>
+            ) : (
+              /* Normal Auth Form */
+              <>
+                <Text style={baseStyles.subtitle}>{isLoginMode ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
+                {errorMessage && (
+                  <View style={baseStyles.errorContainer}>
+                    <AlertCircle color="#FFF" size={20} style={{ marginRight: 8 }} />
+                    <Text style={baseStyles.errorText}>{errorMessage}</Text>
+                  </View>
+                )}
+                <View style={styles.inputContainer}>
+                  {!isLoginMode && (
+                    <>
+                      <View style={styles.inputWrapperAuth}>
+                        <UserIcon size={20} color="#666" style={styles.inputIcon} />
+                        <TextInput
+                          style={styles.inputAuth}
+                          placeholder="Ad"
+                          placeholderTextColor="#666"
+                          value={name}
+                          onChangeText={setName}
+                          autoCapitalize="words"
+                        />
+                      </View>
+                      <View style={styles.inputWrapperAuth}>
+                        <UserIcon size={20} color="#666" style={styles.inputIcon} />
+                        <TextInput
+                          style={styles.inputAuth}
+                          placeholder="Soyad"
+                          placeholderTextColor="#666"
+                          value={surname}
+                          onChangeText={setSurname}
+                          autoCapitalize="words"
+                        />
+                      </View>
+                    </>
+                  )}
                   <View style={styles.inputWrapperAuth}>
-                    <UserIcon size={20} color="#666" style={styles.inputIcon} />
+                    <Mail size={20} color="#666" style={styles.inputIcon} />
                     <TextInput
                       style={styles.inputAuth}
-                      placeholder="Ad"
+                      placeholder="Email"
                       placeholderTextColor="#666"
-                      value={name}
-                      onChangeText={setName}
-                      autoCapitalize="words"
+                      value={email}
+                      onChangeText={setEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
                     />
                   </View>
                   <View style={styles.inputWrapperAuth}>
-                    <UserIcon size={20} color="#666" style={styles.inputIcon} />
+                    <Lock size={20} color="#666" style={styles.inputIcon} />
                     <TextInput
                       style={styles.inputAuth}
-                      placeholder="Soyad"
+                      placeholder="Şifre"
                       placeholderTextColor="#666"
-                      value={surname}
-                      onChangeText={setSurname}
-                      autoCapitalize="words"
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry
                     />
                   </View>
-                </>
-              )}
-              <View style={styles.inputWrapperAuth}>
-                <Mail size={20} color="#666" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.inputAuth}
-                  placeholder="Email"
-                  placeholderTextColor="#666"
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                />
-              </View>
-              <View style={styles.inputWrapperAuth}>
-                <Lock size={20} color="#666" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.inputAuth}
-                  placeholder="Şifre"
-                  placeholderTextColor="#666"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
-              </View>
-              {!isLoginMode && (
-                <View style={styles.inputWrapperAuth}>
-                  <Lock size={20} color="#666" style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.inputAuth}
-                    placeholder="Tekrar Şifre"
-                    placeholderTextColor="#666"
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    secureTextEntry
-                  />
+                  {!isLoginMode && (
+                    <View style={styles.inputWrapperAuth}>
+                      <Lock size={20} color="#666" style={styles.inputIcon} />
+                      <TextInput
+                        style={styles.inputAuth}
+                        placeholder="Tekrar Şifre"
+                        placeholderTextColor="#666"
+                        value={confirmPassword}
+                        onChangeText={setConfirmPassword}
+                        secureTextEntry
+                      />
+                    </View>
+                  )}
                 </View>
-              )}
-            </View>
 
-            <TouchableOpacity
-              style={baseStyles.button}
-              onPress={isLoginMode ? handleLogin : handleRegister}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="black" />
-              ) : (
-                <Text style={baseStyles.buttonText}>{isLoginMode ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
-              )}
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={baseStyles.button}
+                  onPress={isLoginMode ? handleLogin : handleRegister}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="black" />
+                  ) : (
+                    <Text style={baseStyles.buttonText}>{isLoginMode ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
+                  )}
+                </TouchableOpacity>
 
-            {/* Şifremi Unuttum Linki */}
-            {isLoginMode && (
-              <TouchableOpacity
-                style={{ marginTop: 12 }}
-                onPress={() => {
-                  setResetEmail(email); // mevcut email'i modal'a taşı
-                  setResetSuccess(false);
-                  setShowForgotModal(true);
-                }}
-              >
-                <Text style={{ color: COLORS.primary, fontSize: 14 }}>Şifremi Unuttum?</Text>
-              </TouchableOpacity>
+                {/* Şifremi Unuttum Linki */}
+                {isLoginMode && (
+                  <TouchableOpacity
+                    style={{ marginTop: 12 }}
+                    onPress={() => {
+                      setResetEmail(email); // mevcut email'i modal'a taşı
+                      setResetSuccess(false);
+                      setShowForgotModal(true);
+                    }}
+                  >
+                    <Text style={{ color: COLORS.primary, fontSize: 14 }}>Şifremi Unuttum?</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={{ marginTop: 16 }}
+                  onPress={() => {
+                    setIsLoginMode(!isLoginMode);
+                    setErrorMessage(null);
+                  }}
+                >
+                  <Text style={{ color: COLORS.textSecondary }}>
+                    {isLoginMode ? 'Hesabın yok mu? Kayıt Ol' : 'Zaten hesabın var mı? Giriş Yap'}
+                  </Text>
+                </TouchableOpacity>
+              </>
             )}
-
-            <TouchableOpacity
-              style={{ marginTop: 16 }}
-              onPress={() => {
-                setIsLoginMode(!isLoginMode);
-                setErrorMessage(null);
-              }}
-            >
-              <Text style={{ color: COLORS.textSecondary }}>
-                {isLoginMode ? 'Hesabın yok mu? Kayıt Ol' : 'Zaten hesabın var mı? Giriş Yap'}
-              </Text>
-            </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -563,5 +593,36 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     lineHeight: 22,
+  },
+  verificationContainer: {
+    width: '100%',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    padding: 24,
+    borderRadius: 20,
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: COLORS.error + '40', // 25% opacity
+  },
+  verificationTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+    marginBottom: 12,
+  },
+  verificationText: {
+    color: COLORS.textSecondary,
+    fontSize: 15,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  backToLoginBtn: {
+    padding: 12,
+  },
+  backToLoginText: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

@@ -151,7 +151,7 @@ function AppInner() {
   // Auth durumu izle
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
-      if (authUser) {
+      if (authUser && authUser.emailVerified) {
         setLoading(true);
         try {
           const userDoc = await getDoc(doc(db, 'users', authUser.uid));
@@ -176,11 +176,10 @@ function AppInner() {
             setCurrentUser(userData);
             setLoading(false);
           } else {
-            Alert.alert(
-              'Login Error',
-              'User account not found in database. Please create a new account or contact support.'
-            );
+            // User exists in Auth but not in Firestore - this shouldn't happen normally
+            // but if it does, we shouldn't let them in.
             await signOut(auth);
+            setCurrentUser(null);
             setLoading(false);
           }
         } catch (error: any) {
@@ -188,6 +187,7 @@ function AppInner() {
           setLoading(false);
         }
       } else {
+        // If user is not logged in OR email is not verified, set currentUser to null
         setCurrentUser(null);
         setLoading(false);
       }

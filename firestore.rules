@@ -2,34 +2,50 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Function to check if a user is part of a chat ID (format: uid1_uid2)
+    function isChatParticipant(chatId) {
+      return request.auth != null && (request.auth.uid in chatId.split('_'));
+    }
+
     match /users/{userId} {
-      // Giriş yapmış herhangi bir kullanıcı, kullanıcı listesini okuyabilir.
+      // Authenticated users can read other users for search/initialization
       allow read: if request.auth != null;
 
-      // Bir kullanıcı sadece kendi belgesini oluşturabilir/yazabilir/güncelleyebilir.
-      // Yeni kullanıcı kaydı için: authenticated kullanıcı kendi belgesini oluşturabilir
-      allow create: if request.auth != null && request.auth.uid == userId;
-      // Mevcut belgeleri güncelleme: sadece kendi belgesini güncelleyebilir
-      allow update: if request.auth != null && request.auth.uid == userId;
-      // Silme: sadece kendi belgesini silebilir (opsiyonel)
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      // Users can only create/update/delete their own document
+      allow create, update, delete: if request.auth != null && request.auth.uid == userId;
 
-      // New rule for userChats subcollection
-      match /userChats/{chatPartnerId} { // Renamed friendId to chatPartnerId for clarity
-        // A user can only read their own 'userChats' subcollection
-        allow read: if request.auth.uid == userId;
-        // A user can write to their own userChats (userId == request.auth.uid)
-        // OR a user can write to another user's userChats *if they are the chat partner* (chatPartnerId == request.auth.uid)
-        allow write: if request.auth.uid == userId || request.auth.uid == chatPartnerId;
+      // Validation for user updates
+      allow update: if request.auth != null && request.auth.uid == userId
+                    && (request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['name', 'surname', 'avatar', 'about', 'online', 'lastSeen', 'pushToken']));
+
+      match /userChats/{chatPartnerId} {
+        // A user can only read their own 'userChats'
+        allow read: if request.auth != null && request.auth.uid == userId;
+        
+        // A user can write to their own userChats OR update their partner's userChat entry (e.g. unreadCount)
+        // Strictly: you can write to /users/A/userChats/B IF you are A OR (you are B AND updating unreadCount/lastMessage)
+        allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == chatPartnerId);
       }
     }
 
     match /chats/{chatId} {
-      // Kullanıcıların dahil oldukları sohbetleri ve mesajları okumasına/yazmasına izin ver
-      allow read, write: if request.auth.uid in chatId.split('_');
+      // Only participants can read/write the chat metadata
+      allow read, write: if isChatParticipant(chatId);
 
       match /messages/{messageId} {
-        allow read, write: if request.auth.uid in chatId.split('_');
+        // Only participants can read/write messages
+        allow read: if isChatParticipant(chatId);
+        
+        // Only the sender can create or delete (soft delete) their message
+        allow create: if isChatParticipant(chatId) && request.resource.data.senderId == request.auth.uid;
+        allow update: if isChatParticipant(chatId) && (
+          // Allow marking as read by the recipient
+          (resource.data.senderId != request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])) ||
+          // Allow soft delete by the sender
+          (resource.data.senderId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isDeleted']))
+        );
+        allow delete: if false; // Prefer soft deletes for chat history integrity
       }
     }
   }

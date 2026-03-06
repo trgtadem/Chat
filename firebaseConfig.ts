@@ -3,6 +3,7 @@ import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 import { initializeAuth, getReactNativePersistence, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from "firebase/firestore";
 import { getStorage, FirebaseStorage } from "firebase/storage";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
@@ -40,6 +41,15 @@ try {
   // Prevent re-initialization
   if (getApps().length === 0) {
     app = initializeApp(firebaseConfig);
+
+    // Initialize App Check
+    if (process.env.NODE_ENV !== 'test') {
+      initializeAppCheck(app, {
+        provider: new ReCaptchaEnterpriseProvider(process.env.EXPO_PUBLIC_RECAPTCHA_SITE_KEY || 'YOUR_RECAPTCHA_SITE_KEY'),
+        isTokenAutoRefreshEnabled: true,
+      });
+    }
+
     auth = initializeAuth(app, {
       persistence: getReactNativePersistence(ReactNativeAsyncStorage)
     });
