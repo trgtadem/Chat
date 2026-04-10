@@ -17,6 +17,61 @@ export const COLORS = {
   border: '#334155',             // Kenarlık rengi
 };
 
+export const colors = {
+  primary: COLORS.primary,
+  primaryLight: '#60A5FA',
+  primaryDark: '#1D4ED8',
+  background: COLORS.background,
+  backgroundSecondary: '#0F1E33',
+  backgroundTertiary: '#14243D',
+  surface: COLORS.surface,
+  surfaceLight: '#223250',
+  textPrimary: COLORS.textPrimary,
+  textSecondary: COLORS.textSecondary,
+  textTertiary: '#64748B',
+  textMuted: '#475569',
+  online: COLORS.success,
+  offline: '#64748B',
+  danger: COLORS.error,
+  dangerLight: '#FCA5A5',
+  warning: '#F59E0B',
+  success: COLORS.success,
+  border: COLORS.border,
+  borderLight: '#475569',
+  messageSent: COLORS.myMessageBubble,
+  messageReceived: COLORS.theirMessageBubble,
+  overlay: 'rgba(0, 0, 0, 0.6)',
+  overlayLight: 'rgba(0, 0, 0, 0.4)',
+};
+
+export const spacing = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  xxl: 24,
+  xxxl: 32,
+};
+
+export const borderRadius = {
+  sm: 6,
+  md: 10,
+  lg: 14,
+  xl: 20,
+  full: 9999,
+};
+
+export const fontSize = {
+  xs: 11,
+  sm: 13,
+  md: 15,
+  lg: 17,
+  xl: 20,
+  xxl: 24,
+  xxxl: 32,
+};
+
 export const baseStyles = StyleSheet.create({
   container: {
     flex: 1,
