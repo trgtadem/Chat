@@ -5,6 +5,7 @@ import { getFirestore, Firestore } from "firebase/firestore";
 import { getStorage, FirebaseStorage } from "firebase/storage";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -35,6 +36,11 @@ let auth: Auth;
 let db: Firestore;
 let storage: FirebaseStorage;
 
+const shouldInitializeAppCheck =
+  process.env.NODE_ENV !== 'test' &&
+  Platform.OS === 'web' &&
+  typeof document !== 'undefined';
+
 try {
   validateConfig(firebaseConfig);
 
@@ -42,8 +48,8 @@ try {
   if (getApps().length === 0) {
     app = initializeApp(firebaseConfig);
 
-    // Initialize App Check
-    if (process.env.NODE_ENV !== 'test') {
+    // ReCAPTCHA-based App Check is browser-only; skip it on native runtimes.
+    if (shouldInitializeAppCheck) {
       initializeAppCheck(app, {
         provider: new ReCaptchaEnterpriseProvider(process.env.EXPO_PUBLIC_RECAPTCHA_SITE_KEY || 'YOUR_RECAPTCHA_SITE_KEY'),
         isTokenAutoRefreshEnabled: true,

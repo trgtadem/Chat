@@ -936,3 +936,218 @@ ChatApp, Firebase teknolojisini etkin bir şekilde kullanarak gerçek zamanlı b
 
 **Rapor Tarihi**: 6 Mart 2026
 **Sistem Versiyonu**: 1.0.0
+# 2026-04-10 Current Analysis Snapshot
+
+This section is the up-to-date reference for the current codebase. Older sections below may include stale assumptions or encoding noise from previous drafts.
+
+## Validation
+
+- Analysis date: 2026-04-10
+- Workspace: `C:\GitHub\Chat`
+- Type check: `cmd /c npx tsc --noEmit` passed
+
+## Executive Summary
+
+This project is a one-to-one mobile chat application built with Expo, React Native, TypeScript, Firebase Auth, and Firestore. The codebase is not a starter anymore; it already includes authentication, email verification, password reset, real-time messaging, presence tracking, push notifications, profile editing, reply, forward, soft delete, local message search, image upload, file upload, and audio recording.
+
+The main architectural reality is that `App.tsx` controls session/bootstrap, `HomeScreen.tsx` controls the inbox and discovery list, and `ChatScreen.tsx` contains most of the product logic.
+
+## Current Stack
+
+- Expo `~54.0.31`
+- React `19.1.0`
+- React Native `0.81.5`
+- TypeScript `~5.9.2`
+- Firebase `^12.6.0`
+- React Navigation Native Stack `7.x`
+- Expo Notifications
+- Expo Image Picker
+- Expo Document Picker
+- Expo Audio
+- Cloudinary via direct `fetch` uploads
+
+Present but not actively used in the checked code:
+
+- Firebase Storage is initialized but not used as the media backend
+- `cloudinary` SDK package is installed, but uploads are performed manually with `fetch`
+- `expo-video` is configured but not used in current screens
+- `zego-express-engine-reactnative` is installed but no active call flow appears in the checked files
+
+## File Responsibility Map
+
+### Root and session
+
+- `App.tsx`
+  - Firebase auth bootstrap
+  - verified-email gate
+  - push token refresh
+  - online/offline updates
+  - navigation switching
+
+- `src/context/AppContext.tsx`
+  - logged-in user state
+  - shared logout handler
+
+### Screens
+
+- `src/screens/AuthScreen.tsx`
+  - login
+  - register
+  - resend verification
+  - forgot password
+  - initial Firestore user document creation
+
+- `src/screens/HomeScreen.tsx`
+  - listens to `userChats`
+  - listens to all users except current user
+  - merges chats and discoverable users into one list
+  - debounced search by user name and last message text
+
+- `src/screens/ChatScreen.tsx`
+  - messages listener
+  - read receipts
+  - unread counter resets
+  - text send
+  - media send
+  - audio record/send
+  - reply
+  - forward
+  - soft delete
+  - typing indicator
+  - local search
+  - image viewer
+  - push notification dispatch
+
+- `src/screens/ProfileScreen.tsx`
+  - edit own profile
+  - avatar upload
+  - save profile to Firestore
+  - update `currentUser` in context
+  - logout confirmation
+
+### Shared UI and helpers
+
+- `src/components/FriendItem.tsx`
+  - row for either chat preview or plain user
+
+- `src/components/SwipeableMessage.tsx`
+  - text/image/audio/file message rendering
+  - swipe actions
+  - search highlight
+  - audio playback
+
+- `src/utils/index.ts`
+  - `getChatId`
+  - `formatTime`
+  - `formatLastSeen`
+  - `sendPushNotification`
+
+## Firestore Mental Model
+
+Current structure:
+
+```text
+users/{userId}
+users/{userId}/userChats/{chatPartnerId}
+chats/{chatId}
+chats/{chatId}/messages/{messageId}
+```
+
+How to think about it:
+
+- `users/{userId}` is the source of truth for profile and presence
+- `userChats` is the denormalized inbox index
+- `messages` is the real conversation history
+- every important send operation updates both the message history and both users' chat summary documents
+- `chatId` is derived by sorting both user ids and joining with `_`
+
+This dual-write pattern is the most important implementation detail to preserve in future features.
+
+## Core Product Flows
+
+### Auth flow
+
+1. Register with Firebase Auth
+2. Create Firestore user document
+3. Send verification email
+4. Sign user out
+5. Allow entry only after verified login
+
+### Presence flow
+
+1. `App.tsx` listens to auth state
+2. active app marks user `online: true`
+3. background or inactive app marks user offline and updates `lastSeen`
+4. logout also writes presence before sign-out
+
+### Messaging flow
+
+1. Build `messageData`
+2. Write message to `chats/{chatId}/messages`
+3. Update sender summary in `userChats`
+4. Update recipient summary in `userChats`
+5. Increment recipient unread count
+6. Send Expo push notification if token exists
+
+### Media flow
+
+1. Pick image or file, or record audio
+2. Upload to Cloudinary with unsigned client-side upload
+3. Save returned URL into message payload
+4. Write through the same batch-based message flow
+
+## Security Snapshot
+
+`firestore.rules` currently enforce:
+
+- authenticated users can read user profiles
+- users can create, update, and delete only their own profile
+- profile updates are restricted to an allowlist of fields
+- users can read only their own `userChats`
+- chat participants can read and write only their own chat
+- message creation requires sender ownership
+- message updates are limited to read-status changes or soft delete
+- hard delete is disabled
+
+## Important Hotspots
+
+- `src/screens/ChatScreen.tsx` is the main hotspot and currently carries too many responsibilities
+- media uploads use Cloudinary directly from the client
+- Firebase Storage exists in setup but is not the active media path
+- there are no automated tests in the repo right now
+- `package.json` version is `1.0.0` while `app.json` version is `1.1.1`
+
+## Safe Assumptions For Future Work
+
+Unless the code changes, the safest assumptions are:
+
+- this is a mobile-first Expo app
+- the product is one-to-one chat, not group chat
+- email verification is part of the login gate
+- `userChats` matters as much as `messages`
+- media is currently stored outside Firebase
+- push notifications use Expo push tokens
+
+## Best File Targets For Common Requests
+
+- auth or onboarding changes:
+  - `App.tsx`
+  - `src/screens/AuthScreen.tsx`
+  - `firebaseConfig.ts`
+  - `firestore.rules`
+
+- inbox or discovery changes:
+  - `src/screens/HomeScreen.tsx`
+  - `src/components/FriendItem.tsx`
+
+- message behavior changes:
+  - `src/screens/ChatScreen.tsx`
+  - `src/components/SwipeableMessage.tsx`
+  - `src/utils/index.ts`
+
+- profile changes:
+  - `src/screens/ProfileScreen.tsx`
+  - `src/context/AppContext.tsx`
+
+- theme and visual updates:
+  - `src/styles/baseStyles.ts`
