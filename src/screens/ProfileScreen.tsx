@@ -1,433 +1,184 @@
-import React, { useState, useLayoutEffect } from 'react';
+import React, { useLayoutEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   Image,
-  TextInput,
   ScrollView,
   StyleSheet,
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft, Camera, LogOut } from 'lucide-react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { ChevronLeft, PencilLine, Circle } from 'lucide-react-native';
 
-import { db } from '../../firebaseConfig';
-import { User } from '../types';
-import { COLORS, baseStyles } from '../styles/baseStyles';
-import { doc, updateDoc } from 'firebase/firestore';
+import { COLORS } from '../styles/baseStyles';
+import { RootStackParamList } from '../types/navigation';
 import { useAppContext } from '../context/AppContext';
-
-type RootStackParamList = {
-  Profile: { user: User };
-};
+import { formatLastSeen } from '../utils';
 
 type ProfileScreenProps = NativeStackScreenProps<RootStackParamList, 'Profile'>;
 
-export function ProfileScreen({
-  route,
-  navigation,
-}: {
-  route: ProfileScreenProps['route'];
-  navigation: ProfileScreenProps['navigation'];
-}) {
-  const { currentUser, setCurrentUser, handleLogout } = useAppContext();
-  const [isEditing, setIsEditing] = useState(false);
-  const [name, setName] = useState(currentUser?.name ?? 'Unknown');
-  const [surname, setSurname] = useState(currentUser?.surname ?? '');
-  const [about, setAbout] = useState(currentUser?.about ?? '');
-  const [avatar, setAvatar] = useState(currentUser?.avatar ?? 'https://via.placeholder.com/100');
-  const [loading, setLoading] = useState(false);
-
-  // currentUser henüz yüklenmediyse null döndür
-  if (!currentUser) return null;
+export function ProfileScreen({ route, navigation }: ProfileScreenProps) {
+  const { currentUser } = useAppContext();
+  const { user } = route.params;
+  const isOwnProfile = currentUser?.id === user.id;
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerShown: true,
-      headerTitle: 'Profile',
-      headerStyle: {
-        backgroundColor: COLORS.background,
-      },
-      headerTintColor: COLORS.textPrimary,
-      headerTitleStyle: {
-        color: COLORS.textPrimary,
-        fontWeight: '600',
-      },
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={{ marginLeft: 16 }}
-        >
-          <ChevronLeft size={24} color={COLORS.textPrimary} />
-        </TouchableOpacity>
-      ),
-      headerRight: () => (
-        <TouchableOpacity
-          onPress={handleLogoutPress}
-          style={{ marginRight: 16 }}
-        >
-          <LogOut size={24} color="#FF5555" />
-        </TouchableOpacity>
-      ),
+      headerShown: false,
     });
-  }, [navigation, isEditing]);
-
-  const handleLogoutPress = () => {
-    Alert.alert(
-      'Çıkış Yap',
-      'Hesabınızdan çıkış yapmak istediğinize emin misiniz?',
-      [
-        {
-          text: 'Vazgeç',
-          onPress: () => { },
-          style: 'cancel',
-        },
-        {
-          text: 'Çıkış Yap',
-          onPress: () => {
-            handleLogout();
-          },
-          style: 'destructive',
-        },
-      ]
-    );
-  };
-
-  const uploadToCloudinary = async (imageUri: string): Promise<string> => {
-    try {
-      const formData = new FormData();
-      formData.append('file', {
-        uri: imageUri,
-        type: 'image/jpeg',
-        name: 'avatar.jpg',
-      } as any);
-      formData.append('upload_preset', 'my_app');
-
-      const response = await fetch(
-        'https://api.cloudinary.com/v1_1/dhrtxb1ou/image/upload',
-        {
-          method: 'POST',
-          body: formData,
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error('Upload failed');
-      }
-
-      const data = await response.json();
-      return data.secure_url;
-    } catch (error) {
-      console.error('Cloudinary upload error:', error);
-      throw error;
-    }
-  };
-
-  const handlePickAvatar = async () => {
-    try {
-      const permissionResult =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permissionResult.granted) {
-        Alert.alert(
-          'Permission required',
-          'You need to grant camera roll permissions to change avatar.'
-        );
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'images',
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        setLoading(true);
-        const avatarUrl = await uploadToCloudinary(result.assets[0].uri);
-        setAvatar(avatarUrl);
-        setLoading(false);
-      }
-    } catch (error) {
-      console.error('Avatar picking error:', error);
-      Alert.alert('Error', 'Failed to upload avatar. Please try again.');
-      setLoading(false);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!name.trim() || !surname.trim()) {
-      Alert.alert('Validation', 'Name and surname are required.');
-      return;
-    }
-
-    if (!currentUser?.id) {
-      Alert.alert('Error', 'User ID is not available.');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const updateData: any = {
-        name,
-        surname,
-        about,
-        avatar,
-      };
-
-      await updateDoc(doc(db, 'users', currentUser.id), updateData);
-
-      const updatedUser: User = {
-        ...currentUser,
-        ...updateData,
-      };
-
-      setCurrentUser(updatedUser);
-      setIsEditing(false);
-
-      Alert.alert('Success', 'Profile updated successfully.');
-    } catch (error: any) {
-      console.error('Save error:', error);
-      Alert.alert('Error', error.message || 'Failed to update profile.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCancel = () => {
-    setName(currentUser?.name ?? 'Unknown');
-    setSurname(currentUser?.surname ?? '');
-    setAbout(currentUser?.about ?? '');
-    setAvatar(currentUser?.avatar ?? 'https://via.placeholder.com/100');
-    setIsEditing(false);
-  };
+  }, [navigation]);
 
   return (
-    <SafeAreaView style={baseStyles.container}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Avatar Section */}
-          <View style={styles.avatarContainer}>
-            <View style={styles.avatarWrapper}>
-              <Image source={{ uri: avatar }} style={styles.avatar} />
-              {isEditing && (
-                <TouchableOpacity
-                  style={styles.cameraButton}
-                  onPress={handlePickAvatar}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <Camera size={20} color="#FFF" />
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
-            {!isEditing && (
-              <Text style={styles.hintText}>
-                Click the pencil icon to edit
-              </Text>
-            )}
-          </View>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <ChevronLeft size={24} color={COLORS.textPrimary} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Profil</Text>
+        <View style={{ width: 40 }} />
+      </View>
 
-          {/* Info Section */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>First Name</Text>
-            <TextInput
-              style={[
-                styles.input,
-                { opacity: isEditing ? 1 : 0.6 },
-              ]}
-              placeholder="First name"
-              placeholderTextColor={COLORS.textSecondary}
-              value={name}
-              onChangeText={setName}
-              editable={isEditing}
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.avatarWrap}>
+          <Image source={{ uri: user.avatar }} style={styles.avatar} />
+          <View style={styles.onlineRow}>
+            <Circle
+              size={10}
+              fill={user.online ? COLORS.success : COLORS.textSecondary}
+              color={user.online ? COLORS.success : COLORS.textSecondary}
             />
+            <Text style={styles.onlineText}>
+              {user.online ? 'Çevrimiçi' : user.lastSeen ? formatLastSeen(user.lastSeen) : 'Çevrimdışı'}
+            </Text>
           </View>
+        </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Last Name</Text>
-            <TextInput
-              style={[
-                styles.input,
-                { opacity: isEditing ? 1 : 0.6 },
-              ]}
-              placeholder="Last name"
-              placeholderTextColor={COLORS.textSecondary}
-              value={surname}
-              onChangeText={setSurname}
-              editable={isEditing}
-            />
-          </View>
+        <Text style={styles.name}>
+          {user.name} {user.surname}
+        </Text>
+        <Text style={styles.email}>{user.email}</Text>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>About</Text>
-            <TextInput
-              style={[
-                styles.input,
-                styles.aboutInput,
-                { opacity: isEditing ? 1 : 0.6 },
-              ]}
-              placeholder="Write something about yourself..."
-              placeholderTextColor={COLORS.textSecondary}
-              value={about}
-              onChangeText={setAbout}
-              editable={isEditing}
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
-            />
-          </View>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Hakkında</Text>
+          <Text style={styles.cardValue}>
+            {user.about?.trim() ? user.about : 'Bu kullanıcı henüz bir açıklama eklemedi.'}
+          </Text>
+        </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Email</Text>
-            <View style={[styles.input, { justifyContent: 'center' }]}>
-              <Text style={styles.emailText}>{currentUser?.email ?? 'No email'}</Text>
-            </View>
-          </View>
-
-          {/* Action Buttons */}
-          {!isEditing ? (
-            <TouchableOpacity
-              style={[baseStyles.button, { marginTop: 32 }]}
-              onPress={() => setIsEditing(true)}
-            >
-              <Text style={baseStyles.buttonText}>Edit Profile</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.buttonGroup}>
-              <TouchableOpacity
-                style={[baseStyles.button, styles.saveButton]}
-                onPress={handleSave}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator size="small" color="#000" />
-                ) : (
-                  <Text style={baseStyles.buttonText}>Save Changes</Text>
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[baseStyles.button, styles.cancelButton]}
-                onPress={handleCancel}
-                disabled={loading}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+        {isOwnProfile ? (
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => navigation.navigate('EditProfile')}
+            activeOpacity={0.86}
+          >
+            <PencilLine size={18} color="#000" />
+            <Text style={styles.editButtonText}>Profili Düzenle</Text>
+          </TouchableOpacity>
+        ) : null}
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.surface,
-    backgroundColor: COLORS.surface,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: COLORS.textPrimary,
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingVertical: 24,
-  },
-  avatarContainer: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  avatarWrapper: {
-    position: 'relative',
-    marginBottom: 12,
-  },
-  avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: COLORS.surface,
-  },
-  cameraButton: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: COLORS.primary,
+  backButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: COLORS.surface,
   },
-  hintText: {
-    fontSize: 12,
+  headerTitle: {
+    color: COLORS.textPrimary,
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  content: {
+    padding: 18,
+    alignItems: 'center',
+  },
+  avatarWrap: {
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  avatar: {
+    width: 118,
+    height: 118,
+    borderRadius: 59,
+    backgroundColor: COLORS.surface,
+  },
+  onlineRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  onlineText: {
     color: COLORS.textSecondary,
-  },
-  section: {
-    marginBottom: 20,
-  },
-  sectionLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
+  },
+  name: {
+    marginTop: 18,
+    color: COLORS.textPrimary,
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  email: {
+    marginTop: 6,
     color: COLORS.textSecondary,
-    marginBottom: 8,
+    fontSize: 14,
   },
-  input: {
-    backgroundColor: COLORS.inputBackground,
+  card: {
+    marginTop: 24,
+    width: '100%',
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 16,
+  },
+  cardTitle: {
+    color: COLORS.textSecondary,
+    textTransform: 'uppercase',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cardValue: {
+    color: COLORS.textPrimary,
+    marginTop: 8,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  editButton: {
+    marginTop: 20,
+    width: '100%',
+    backgroundColor: COLORS.primary,
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: COLORS.textPrimary,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: COLORS.surface,
+    paddingVertical: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
   },
-  aboutInput: {
-    minHeight: 100,
-    paddingTop: 12,
-  },
-  emailText: {
-    color: COLORS.textPrimary,
-    fontSize: 16,
-  },
-  buttonGroup: {
-    gap: 12,
-    marginTop: 32,
-  },
-  saveButton: {
-    marginBottom: 0,
-  },
-  cancelButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-  },
-  cancelButtonText: {
-    color: COLORS.primary,
-    fontSize: 16,
-    fontWeight: 'bold',
+  editButtonText: {
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 15,
   },
 });

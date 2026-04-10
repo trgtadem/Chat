@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
   PanResponder,
+  ActionSheetIOS,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft, Paperclip, Send, Plus, Mic, MoreVertical, Search, X as XIcon } from 'lucide-react-native';
@@ -41,12 +42,7 @@ import { COLORS } from '../styles/baseStyles';
 import { getChatId, formatTime, formatLastSeen, sendPushNotification } from '../utils';
 import { SwipeableMessage } from '../components/SwipeableMessage';
 import { useAppContext } from '../context/AppContext';
-
-type RootStackParamList = {
-  Home: undefined;
-  Chat: { user: User; friend: User; forwardingMessage?: Message };
-  Profile: { user: User };
-};
+import { RootStackParamList } from '../types/navigation';
 
 type ChatScreenProps = NativeStackScreenProps<RootStackParamList, 'Chat'>;
 
@@ -57,7 +53,7 @@ export function ChatScreen({
   route: ChatScreenProps['route'];
   navigation: ChatScreenProps['navigation'];
 }) {
-  const { currentUser } = useAppContext();
+  const { currentUser, blockUser, isUserBlocked, getChatSettings } = useAppContext();
   const { user, friend, forwardingMessage: routeForwardingMessage } = route.params;
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -100,6 +96,8 @@ export function ChatScreen({
   }
 
   const chatId = getChatId(user.id, friend.id);
+  const isBlocked = isUserBlocked(friend.id);
+  const chatWallpaper = getChatSettings(chatId)?.wallpaper;
 
   // Handle forwarding message from route params
   useEffect(() => {
@@ -598,6 +596,11 @@ export function ChatScreen({
   };
 
   const handleSendMessage = async () => {
+    if (isBlocked) {
+      Alert.alert('Engellendi', 'Bu kullanıcıyı engellediğin için mesaj gönderemezsin.');
+      return;
+    }
+
     if (!inputText.trim()) return;
 
     setIsSending(true);
@@ -722,8 +725,67 @@ export function ChatScreen({
     ]);
   };
 
+  const handleOpenChatMenu = () => {
+    const handleAction = (actionIndex: number) => {
+      if (actionIndex === 1) {
+        Alert.alert('Kullanıcıyı Engelle', `${friend.name} kişisini engellemek istiyor musun?`, [
+          { text: 'Vazgeç', style: 'cancel' },
+          {
+            text: 'Engelle',
+            style: 'destructive',
+            onPress: () => {
+              blockUser(friend);
+              Alert.alert('Tamam', 'Kullanıcı engellendi.');
+              navigation.goBack();
+            },
+          },
+        ]);
+        return;
+      }
+
+      if (actionIndex === 2) {
+        navigation.navigate('StarredMessages', { friend });
+        return;
+      }
+
+      if (actionIndex === 3) {
+        navigation.navigate('ChatWallpaper', { friend });
+        return;
+      }
+
+      if (actionIndex === 4) {
+        navigation.navigate('Profile', { user: friend });
+      }
+    };
+
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['İptal', 'Kullanıcıyı Engelle', 'Yıldızlı Mesajlar', 'Duvar Kağıdı', 'Profili Görüntüle'],
+          cancelButtonIndex: 0,
+          destructiveButtonIndex: 1,
+        },
+        (buttonIndex) => handleAction(buttonIndex)
+      );
+      return;
+    }
+
+    Alert.alert('Sohbet Seçenekleri', `${friend.name} ${friend.surname}`, [
+      { text: 'Kullanıcıyı Engelle', style: 'destructive', onPress: () => handleAction(1) },
+      { text: 'Yıldızlı Mesajlar', onPress: () => handleAction(2) },
+      { text: 'Duvar Kağıdı', onPress: () => handleAction(3) },
+      { text: 'Profili Görüntüle', onPress: () => handleAction(4) },
+      { text: 'İptal', style: 'cancel' },
+    ]);
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView
+      style={[
+        styles.container,
+        chatWallpaper?.type === 'color' ? { backgroundColor: chatWallpaper.value } : null,
+      ]}
+    >
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -763,21 +825,27 @@ export function ChatScreen({
               >
                 <ChevronLeft size={28} color={COLORS.textPrimary} />
               </TouchableOpacity>
-              <Image source={{ uri: friend.avatar }} style={styles.chatAvatar} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.chatTitle}>
-                  {friend.name} {friend.surname}
-                </Text>
-                <Text style={{ color: COLORS.textSecondary, fontSize: 12 }}>
-                  {friendIsTyping
-                    ? 'typing...'
-                    : friend.online
-                      ? 'Online'
-                      : friend.lastSeen
-                        ? formatLastSeen(friend.lastSeen)
-                        : 'Offline'}
-                </Text>
-              </View>
+              <TouchableOpacity
+                style={styles.chatProfileTapArea}
+                onPress={() => navigation.navigate('Profile', { user: friend })}
+                activeOpacity={0.86}
+              >
+                <Image source={{ uri: friend.avatar }} style={styles.chatAvatar} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.chatTitle}>
+                    {friend.name} {friend.surname}
+                  </Text>
+                  <Text style={{ color: COLORS.textSecondary, fontSize: 12 }}>
+                    {friendIsTyping
+                      ? 'typing...'
+                      : friend.online
+                        ? 'Online'
+                        : friend.lastSeen
+                          ? formatLastSeen(friend.lastSeen)
+                          : 'Offline'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setIsSearching(true)}
                 style={{ padding: 8 }}
@@ -785,7 +853,7 @@ export function ChatScreen({
                 <Search size={22} color={COLORS.textPrimary} />
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => navigation.navigate('Profile', { user: currentUser })}
+                onPress={handleOpenChatMenu}
                 style={{ padding: 8 }}
               >
                 <MoreVertical size={24} color={COLORS.textPrimary} />
@@ -852,12 +920,17 @@ export function ChatScreen({
         )}
 
         {/* Input Area */}
+        {isBlocked ? (
+          <View style={styles.blockedInfoBar}>
+            <Text style={styles.blockedInfoText}>Bu kullanıcıyı engelledin. Mesaj gönderimi kapalı.</Text>
+          </View>
+        ) : null}
         <View style={styles.inputWrapper}>
           <View style={styles.inputContainer}>
             <TouchableOpacity
               style={styles.attachButton}
               onPress={() => handlePickImage()}
-              disabled={isUploading || isRecording}
+              disabled={isUploading || isRecording || isBlocked}
             >
               {isUploading ? (
                 <ActivityIndicator size="small" color={COLORS.textSecondary} />
@@ -873,13 +946,13 @@ export function ChatScreen({
               value={inputText}
               onChangeText={handleTyping}
               multiline
-              editable={!isRecording}
+              editable={!isRecording && !isBlocked}
             />
 
             <TouchableOpacity
               style={styles.attachButton}
               onPress={handlePickFile}
-              disabled={isUploading || isRecording}
+              disabled={isUploading || isRecording || isBlocked}
             >
               <Plus size={22} color={COLORS.textSecondary} />
             </TouchableOpacity>
@@ -905,13 +978,14 @@ export function ChatScreen({
               <TouchableOpacity
                 style={styles.recordButton}
                 onPress={startRecording}
+                disabled={isBlocked}
               >
                 <Mic size={22} color={COLORS.primary} />
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleSendMessage}
-                style={[styles.sendButton, (isSending || !inputText.trim()) && { opacity: 0.5 }]}
-                disabled={isSending || !inputText.trim()}
+                style={[styles.sendButton, (isSending || !inputText.trim() || isBlocked) && { opacity: 0.5 }]}
+                disabled={isSending || !inputText.trim() || isBlocked}
               >
                 <Send size={24} color="#FFF" />
               </TouchableOpacity>
@@ -942,8 +1016,28 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.surface,
     backgroundColor: COLORS.surface,
   },
+  chatProfileTapArea: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 46,
+  },
   chatAvatar: { width: 40, height: 40, borderRadius: 20, marginHorizontal: 12 },
   chatTitle: { fontSize: 18, fontWeight: 'bold', color: COLORS.textPrimary },
+  blockedInfoBar: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  blockedInfoText: {
+    color: '#fecaca',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   inputWrapper: {
     flexDirection: 'row',
     paddingHorizontal: 12,

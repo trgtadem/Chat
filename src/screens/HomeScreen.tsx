@@ -7,11 +7,10 @@ import {
   Image,
   StyleSheet,
   TextInput,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { LogOut, Settings, Search, X } from 'lucide-react-native';
+import { Settings, Search, X } from 'lucide-react-native';
 import {
   collection,
   onSnapshot,
@@ -24,14 +23,9 @@ import { db } from '../../firebaseConfig';
 import { User } from '../types';
 import { COLORS } from '../styles/baseStyles';
 import { useAppContext } from '../context/AppContext';
+import { RootStackParamList } from '../types/navigation';
 
 import { FriendItem } from '../components/FriendItem';
-
-type RootStackParamList = {
-  Home: undefined;
-  Chat: { user: User; friend: User; forwardingMessage?: any };
-  Profile: { user: User };
-};
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
@@ -44,7 +38,7 @@ export function HomeScreen({
   forwardingMessage?: any;
   onForwardComplete?: () => void;
 }) {
-  const { currentUser, handleLogout } = useAppContext();
+  const { currentUser, isUserBlocked } = useAppContext();
   const [chats, setChats] = useState<any[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [displayList, setDisplayList] = useState<any[]>([]);
@@ -124,12 +118,12 @@ export function HomeScreen({
         pushToken: chat.pushToken ?? null,
       };
       return { ...chat, isChat: true, friendUser };
-    });
+    }).filter((chat) => !isUserBlocked(chat.friendUser.id));
 
     const chattedUserIds = new Set(chats.map((chat) => chat.id));
 
     const otherUsers = allUsers
-      .filter((user) => !chattedUserIds.has(user.id))
+      .filter((user) => !chattedUserIds.has(user.id) && !isUserBlocked(user.id))
       .map((user) => ({ ...user, isChat: false }));
 
     const combinedList = [
@@ -138,7 +132,7 @@ export function HomeScreen({
     ];
 
     setDisplayList(combinedList);
-  }, [chats, allUsers]);
+  }, [allUsers, chats, isUserBlocked]);
 
   // Debounce search — 300ms gecikme
   const handleSearchChange = (text: string) => {
@@ -216,7 +210,7 @@ export function HomeScreen({
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity
-            onPress={() => navigation.navigate('Profile', { user: currentUser! })}
+            onPress={() => navigation.navigate('Settings')}
             style={{ padding: 8 }}
           >
             <Settings size={24} color={COLORS.primary} />

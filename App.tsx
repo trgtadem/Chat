@@ -28,8 +28,9 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 
-import { User, Message } from './src/types';
+import { User } from './src/types';
 import { COLORS, baseStyles } from './src/styles/baseStyles';
+import { RootStackParamList } from './src/types/navigation';
 
 // Context
 import { AppProvider, useAppContext } from './src/context/AppContext';
@@ -38,6 +39,15 @@ import { AuthScreen } from './src/screens/AuthScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
+import { EditProfileScreen } from './src/screens/EditProfileScreen';
+import { ThemesScreen } from './src/screens/ThemesScreen';
+import { SecurityScreen } from './src/screens/SecurityScreen';
+import { PrivacyScreen } from './src/screens/PrivacyScreen';
+import { BlockedUsersScreen } from './src/screens/BlockedUsersScreen';
+import { AboutScreen } from './src/screens/AboutScreen';
+import { StarredMessagesScreen } from './src/screens/StarredMessagesScreen';
+import { ChatWallpaperScreen } from './src/screens/ChatWallpaperScreen';
 
 // Notification Handler Setup
 Notifications.setNotificationHandler({
@@ -52,13 +62,6 @@ Notifications.setNotificationHandler({
     };
   },
 });
-
-type RootStackParamList = {
-  Auth: undefined;
-  Home: undefined;
-  Chat: { user: User; friend: User; forwardingMessage?: Message };
-  Profile: { user: User };
-};
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -238,6 +241,15 @@ function AppInner() {
             <Stack.Screen name="Chat" component={ChatScreen} />
             {/* Profile — currentUser context'ten geliyor */}
             <Stack.Screen name="Profile" component={ProfileScreen} />
+            <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="EditProfile" component={EditProfileScreen} />
+            <Stack.Screen name="Themes" component={ThemesScreen} />
+            <Stack.Screen name="Security" component={SecurityScreen} />
+            <Stack.Screen name="Privacy" component={PrivacyScreen} />
+            <Stack.Screen name="BlockedUsers" component={BlockedUsersScreen} />
+            <Stack.Screen name="About" component={AboutScreen} />
+            <Stack.Screen name="StarredMessages" component={StarredMessagesScreen} />
+            <Stack.Screen name="ChatWallpaper" component={ChatWallpaperScreen} />
           </>
         ) : (
           <Stack.Screen name="Auth" component={AuthScreen} />
