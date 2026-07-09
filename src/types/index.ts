@@ -9,6 +9,31 @@ export type User = {
   lastSeen: any; // Firestore ServerTimestamp
   online: boolean;
   pushToken?: string;
+  /** Benzersiz arkadas kodu (paylasilarak arkadas eklemek icin) */
+  friendCode?: string;
+};
+
+/** Arkadaslik istegi (users/{toUid}/friendRequests/{fromUid}) */
+export type FriendRequest = {
+  fromUid: string;
+  toUid: string;
+  fromUser: {
+    name: string;
+    surname: string;
+    avatar: string;
+    friendCode?: string;
+  };
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt: any;
+};
+
+/** Denormalize arkadas kaydi (users/{uid}/friends/{friendUid}) */
+export type Friend = {
+  id: string;
+  name: string;
+  surname: string;
+  avatar: string;
+  since: any;
 };
 
 export type Message = {
@@ -52,14 +77,26 @@ export type Session = {
 
 export type WallpaperOption = {
   id: string;
-  type: 'color' | 'gradient' | 'image';
+  type: 'color' | 'gradient' | 'pattern' | 'image';
+  /** color: hex; image: url; pattern: taban renk hex */
   value: string;
+  /** gradient tipi icin renk duraklari */
+  gradient?: string[];
+  /** pattern tipi icin desen anahtari (ChatBackground'da cizilir) */
+  pattern?: string;
+  /** pattern desen rengi (opsiyonel) */
+  patternColor?: string;
   preview?: string;
   name?: string;
 };
 
+export type ThemeMode = 'system' | 'light' | 'dark' | 'amoled';
+
 export type ThemeSettings = {
-  appearance: 'dark' | 'light' | 'system';
+  /** Gorunum modu */
+  mode: ThemeMode;
+  /** Vurgu (accent) rengi - hex */
+  accentColor: string;
   chatBubbleStyle: 'default' | 'minimal' | 'rounded';
   fontSize: 'small' | 'medium' | 'large';
   globalWallpaper?: WallpaperOption;

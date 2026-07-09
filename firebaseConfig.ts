@@ -1,7 +1,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 // @ts-ignore: Firebase v11+ typing issue for getReactNativePersistence in React Native
-import { initializeAuth, getReactNativePersistence, Auth } from 'firebase/auth';
-import { getFirestore, Firestore } from "firebase/firestore";
+import { initializeAuth, getAuth, getReactNativePersistence, Auth } from 'firebase/auth';
+import { initializeFirestore, getFirestore, Firestore } from "firebase/firestore";
 import { getStorage, FirebaseStorage } from "firebase/storage";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
@@ -60,13 +60,29 @@ try {
       persistence: getReactNativePersistence(ReactNativeAsyncStorage)
     });
   } else {
+    // App zaten baslatilmis (or. Fast Refresh / yeniden import).
+    // initializeAuth yalnizca BIR kez cagrilabilir; tekrar cagrilirsa
+    // 'auth/already-initialized' firlatir. Bu yuzden mevcut ornegi al.
     app = getApp();
-    auth = initializeAuth(app, {
-      persistence: getReactNativePersistence(ReactNativeAsyncStorage)
-    });
+    auth = getAuth(app);
   }
 
-  db = getFirestore(app);
+  // initializeFirestore ile ignoreUndefinedProperties acilir; boylece bir alan
+  // undefined oldugunda tum yazma (batch) reddedilmez. Zaten baslatilmissa
+  // (getApps > 0) tekrar cagirmak hata verecegi icin getFirestore'a dusulur.
+  //
+  // React Native/Android'de varsayilan WebChannel tasimasi cogu agda
+  // "Could not reach Cloud Firestore backend" hatasi verir ve istemci
+  // cevrimdisi moda duser (giris ekrani takilir). Native platformlarda
+  // long polling'i otomatik algilamayi acmak baglantiyi guvenilir kilar.
+  try {
+    db = initializeFirestore(app, {
+      ignoreUndefinedProperties: true,
+      ...(Platform.OS !== 'web' ? { experimentalForceLongPolling: true } : {}),
+    });
+  } catch {
+    db = getFirestore(app);
+  }
   storage = getStorage(app);
 } catch (error) {
   console.error("Firebase Initialization Failed:", error);

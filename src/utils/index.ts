@@ -3,6 +3,18 @@ export const getChatId = (user1Id: string, user2Id: string) => {
   return `${sortedIds[0]}_${sortedIds[1]}`;
 };
 
+// Kolay okunur, karistirilabilir karakterler (0/O, 1/I/L) cikarilmis alfabe
+const FRIEND_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+/** 8 haneli, okunur bir arkadas kodu uretir (or. "K7QMPX2R"). */
+export const generateFriendCode = (length = 8): string => {
+  let code = '';
+  for (let i = 0; i < length; i++) {
+    code += FRIEND_CODE_ALPHABET[Math.floor(Math.random() * FRIEND_CODE_ALPHABET.length)];
+  }
+  return code;
+};
+
 export const formatTime = (timestamp: any) => {
   try {
     if (!timestamp) return '';

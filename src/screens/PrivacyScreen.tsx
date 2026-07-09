@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,26 +10,27 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ChevronLeft } from 'lucide-react-native';
 
-import { COLORS } from '../styles/baseStyles';
 import { RootStackParamList } from '../types/navigation';
+import { useTheme } from '../context/AppContext';
+import { Theme } from '../theme';
 
 type PrivacyScreenProps = NativeStackScreenProps<RootStackParamList, 'Privacy'>;
 
 export function PrivacyScreen({ navigation }: PrivacyScreenProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [showOnlineStatus, setShowOnlineStatus] = useState(true);
   const [allowReadReceipts, setAllowReadReceipts] = useState(true);
 
   useLayoutEffect(() => {
-    navigation.setOptions({
-      headerShown: false,
-    });
+    navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <ChevronLeft size={24} color={COLORS.textPrimary} />
+          <ChevronLeft size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Gizlilik</Text>
         <View style={{ width: 40 }} />
@@ -44,7 +45,8 @@ export function PrivacyScreen({ navigation }: PrivacyScreenProps) {
           <Switch
             value={showOnlineStatus}
             onValueChange={setShowOnlineStatus}
-            trackColor={{ true: COLORS.primary, false: COLORS.border }}
+            trackColor={{ true: theme.colors.primary, false: theme.colors.border }}
+            thumbColor={theme.colors.surface}
           />
         </View>
 
@@ -56,7 +58,8 @@ export function PrivacyScreen({ navigation }: PrivacyScreenProps) {
           <Switch
             value={allowReadReceipts}
             onValueChange={setAllowReadReceipts}
-            trackColor={{ true: COLORS.primary, false: COLORS.border }}
+            trackColor={{ true: theme.colors.primary, false: theme.colors.border }}
+            thumbColor={theme.colors.surface}
           />
         </View>
 
@@ -68,64 +71,67 @@ export function PrivacyScreen({ navigation }: PrivacyScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.surface,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-  },
-  headerTitle: {
-    color: COLORS.textPrimary,
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  content: {
-    padding: 16,
-    gap: 12,
-  },
-  row: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12,
-  },
-  rowTextWrap: {
-    flex: 1,
-  },
-  rowTitle: {
-    color: COLORS.textPrimary,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  rowSubtitle: {
-    color: COLORS.textSecondary,
-    marginTop: 4,
-    fontSize: 13,
-  },
-  infoText: {
-    color: COLORS.textSecondary,
-    marginTop: 8,
-    lineHeight: 20,
-  },
-});
+const makeStyles = (t: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+      backgroundColor: t.colors.headerBackground,
+    },
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: t.radius.pill,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: t.colors.surfaceAlt,
+    },
+    headerTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 20 * t.fontScale,
+      fontWeight: '700',
+    },
+    content: {
+      padding: 16,
+      gap: 12,
+    },
+    row: {
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radius.lg,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      padding: 16,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 12,
+    },
+    rowTextWrap: {
+      flex: 1,
+    },
+    rowTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 16 * t.fontScale,
+      fontWeight: '600',
+    },
+    rowSubtitle: {
+      color: t.colors.textSecondary,
+      marginTop: 4,
+      fontSize: 13 * t.fontScale,
+    },
+    infoText: {
+      color: t.colors.textSecondary,
+      marginTop: 8,
+      lineHeight: 20,
+      fontSize: 13 * t.fontScale,
+    },
+  });

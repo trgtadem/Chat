@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,17 +6,32 @@ import {
   Image,
   TouchableOpacity,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
-import { Check, CheckCheck, Play, Download } from 'lucide-react-native';
+import { Check, CheckCheck, Play, Pause, Download } from 'lucide-react-native';
 import * as AudioModule from 'expo-audio';
 
 import { Message } from '../types';
-import { COLORS } from '../styles/baseStyles';
+import { useTheme } from '../context/AppContext';
+import { Theme } from '../theme';
 import { formatTime } from '../utils';
 
-export const SwipeableMessage = ({
+// Balon kose yaricapini secili balon stiline gore hesaplar
+function bubbleShape(t: Theme, isMe: boolean) {
+  if (t.bubbleStyle === 'rounded') {
+    return { borderRadius: t.radius.lg };
+  }
+  if (t.bubbleStyle === 'minimal') {
+    return { borderRadius: t.radius.sm };
+  }
+  // default: kuyruklu klasik balon
+  return {
+    borderRadius: t.radius.lg,
+    ...(isMe ? { borderBottomRightRadius: 4 } : { borderBottomLeftRadius: 4 }),
+  };
+}
+
+const SwipeableMessageComponent = ({
   item,
   isMe,
   onReply,
@@ -33,13 +48,33 @@ export const SwipeableMessage = ({
   onImagePress: (imageUrl: string) => void;
   searchQuery?: string;
 }) => {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioPlayer, setAudioPlayer] = useState<AudioModule.AudioPlayer | null>(null);
 
+  // Balon uzerindeki metin rengi (gonderen vs alan)
+  const bubbleTextColor = isMe ? theme.colors.myMessageText : theme.colors.theirMessageText;
+  const shape = bubbleShape(theme, isMe);
+
+  // Ses oynaticiyi bilesen kaldirilirken (veya oynatici degisince) serbest birak
+  useEffect(() => {
+    return () => {
+      if (audioPlayer) {
+        try {
+          audioPlayer.remove();
+        } catch {
+          // yok say
+        }
+      }
+    };
+  }, [audioPlayer]);
+
   // Render text with highlighted search matches
   const renderHighlightedText = (text: string) => {
+    const baseTextStyle = [styles.messageText, { color: bubbleTextColor }];
     if (!searchQuery.trim()) {
-      return <Text style={styles.messageText}>{text}</Text>;
+      return <Text style={baseTextStyle}>{text}</Text>;
     }
     const lowerText = text.toLowerCase();
     const lowerQuery = searchQuery.toLowerCase();
@@ -49,13 +84,13 @@ export const SwipeableMessage = ({
     while (index !== -1) {
       if (index > lastIndex) {
         parts.push(
-          <Text key={`t-${lastIndex}`} style={styles.messageText}>
+          <Text key={`t-${lastIndex}`} style={baseTextStyle}>
             {text.slice(lastIndex, index)}
           </Text>
         );
       }
       parts.push(
-        <Text key={`h-${index}`} style={[styles.messageText, styles.highlightedText]}>
+        <Text key={`h-${index}`} style={[baseTextStyle, styles.highlightedText]}>
           {text.slice(index, index + searchQuery.length)}
         </Text>
       );
@@ -64,7 +99,7 @@ export const SwipeableMessage = ({
     }
     if (lastIndex < text.length) {
       parts.push(
-        <Text key={`t-${lastIndex}`} style={styles.messageText}>
+        <Text key={`t-${lastIndex}`} style={baseTextStyle}>
           {text.slice(lastIndex)}
         </Text>
       );
@@ -139,17 +174,17 @@ export const SwipeableMessage = ({
         style={{
           alignItems: isMe ? 'flex-end' : 'flex-start',
           marginBottom: 8,
+          paddingHorizontal: 8,
         }}
       >
         <View
           style={[
             styles.messageBubble,
-            isMe
-              ? styles.myMessageBubble
-              : styles.theirMessageBubble,
+            shape,
+            isMe ? styles.myMessageBubble : styles.theirMessageBubble,
           ]}
         >
-          <Text style={styles.deletedText}>This message was deleted</Text>
+          <Text style={styles.deletedText}>Bu mesaj silindi</Text>
         </View>
       </View>
     );
@@ -173,37 +208,29 @@ export const SwipeableMessage = ({
             <TouchableOpacity
               style={styles.playButton}
               onPress={playAudio}
-              disabled={audioPlaying}
             >
               {audioPlaying ? (
-                <ActivityIndicator
-                  size="small"
-                  color={isMe ? '#FFFFFF' : '#FFFFFF'}
-                />
+                <Pause size={20} color={bubbleTextColor} fill={bubbleTextColor} />
               ) : (
-                <Play
-                  size={20}
-                  color={isMe ? '#FFFFFF' : '#FFFFFF'}
-                  fill={isMe ? '#FFFFFF' : '#FFFFFF'}
-                />
+                <Play size={20} color={bubbleTextColor} fill={bubbleTextColor} />
               )}
             </TouchableOpacity>
-            <Text style={styles.audioLabel}>Voice Message</Text>
+            <Text style={[styles.audioLabel, { color: bubbleTextColor }]}>Sesli Mesaj</Text>
           </View>
         );
 
       case 'file':
         return (
           <View style={styles.fileContainer}>
-            <Download size={24} color={isMe ? '#FFFFFF' : '#FFFFFF'} />
+            <Download size={24} color={bubbleTextColor} />
             <View style={{ flex: 1 }}>
               <Text
-                style={styles.fileName}
+                style={[styles.fileName, { color: bubbleTextColor }]}
                 numberOfLines={1}
               >
-                {item.fileName || 'File'}
+                {item.fileName || 'Dosya'}
               </Text>
-              <Text style={styles.fileSize}>File</Text>
+              <Text style={[styles.fileSize, { color: bubbleTextColor, opacity: 0.7 }]}>Dosya</Text>
             </View>
           </View>
         );
@@ -213,6 +240,8 @@ export const SwipeableMessage = ({
         return renderHighlightedText(item.text ?? 'No content');
     }
   };
+
+  const footerColor = isMe ? theme.colors.myMessageText : theme.colors.textSecondary;
 
   return (
     <Swipeable renderRightActions={renderRightActions}>
@@ -229,7 +258,7 @@ export const SwipeableMessage = ({
             <View style={styles.quoteBar} />
             <View>
               <Text style={styles.quoteAuthor}>
-                {item.replyTo.senderId === item.senderId ? 'You' : 'Them'}
+                {item.replyTo.senderId === item.senderId ? 'Sen' : 'Karşı taraf'}
               </Text>
               <Text
                 style={styles.quoteText}
@@ -247,32 +276,32 @@ export const SwipeableMessage = ({
         <View
           style={[
             styles.messageBubble,
-            isMe
-              ? styles.myMessageBubble
-              : styles.theirMessageBubble,
+            shape,
+            isMe ? styles.myMessageBubble : styles.theirMessageBubble,
             item.type !== 'text' && {
               padding: 0,
+              overflow: 'hidden',
               backgroundColor:
                 item.type === 'image'
                   ? 'transparent'
                   : isMe
-                    ? COLORS.myMessageBubble
-                    : COLORS.theirMessageBubble,
+                    ? theme.colors.myMessageBubble
+                    : theme.colors.theirMessageBubble,
             },
           ]}
         >
           {renderContent()}
           {item.type !== 'image' && (
             <View style={styles.messageFooter}>
-              <Text style={styles.timeText}>
+              <Text style={[styles.timeText, { color: footerColor, opacity: 0.8 }]}>
                 {formatTime(item.createdAt)}
               </Text>
               {isMe && (
                 <View style={{ marginLeft: 4 }}>
                   {item.status === 'read' ? (
-                    <CheckCheck size={14} color={COLORS.read} />
+                    <CheckCheck size={14} color={theme.colors.myMessageText} />
                   ) : (
-                    <Check size={14} color="#AAA" />
+                    <Check size={14} color={theme.colors.myMessageText} />
                   )}
                 </View>
               )}
@@ -289,9 +318,9 @@ export const SwipeableMessage = ({
             {isMe && (
               <View style={{ marginLeft: 4 }}>
                 {item.status === 'read' ? (
-                  <CheckCheck size={14} color={COLORS.read} />
+                  <CheckCheck size={14} color={theme.colors.read} />
                 ) : (
-                  <Check size={14} color="#AAA" />
+                  <Check size={14} color={theme.colors.textSecondary} />
                 )}
               </View>
             )}
@@ -302,139 +331,138 @@ export const SwipeableMessage = ({
   );
 };
 
-const styles = StyleSheet.create({
-  actionContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    gap: 4,
-  },
-  actionButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: COLORS.primary,
-    borderRadius: 8,
-    justifyContent: 'center',
-  },
-  forwardButton: {
-    backgroundColor: COLORS.accent,
-  },
-  deleteButton: {
-    backgroundColor: '#CF6679',
-  },
-  actionText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  quotedMessage: {
-    flexDirection: 'row',
-    marginBottom: 8,
-    paddingLeft: 8,
-    maxWidth: '80%',
-    backgroundColor: COLORS.inputBackground,
-    borderRadius: 8,
-    padding: 8,
-    gap: 8,
-  },
-  quoteBar: {
-    width: 3,
-    backgroundColor: COLORS.primary,
-    borderRadius: 2,
-  },
-  quoteAuthor: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.primary,
-  },
-  quoteText: {
-    fontSize: 13,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  messageBubble: {
-    padding: 10,
-    borderRadius: 18,
-    maxWidth: '80%',
-  },
-  myMessageBubble: {
-    backgroundColor: COLORS.myMessageBubble,
-    borderBottomRightRadius: 0,
-  },
-  theirMessageBubble: {
-    backgroundColor: COLORS.theirMessageBubble,
-    borderBottomLeftRadius: 0,
-  },
-  messageText: {
-    color: '#FFF',
-    fontSize: 16,
-  },
-  highlightedText: {
-    backgroundColor: 'rgba(255, 220, 0, 0.5)',
-    color: '#000',
-    borderRadius: 3,
-  },
-  deletedText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    fontStyle: 'italic',
-  },
-  messageFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-    justifyContent: 'flex-end',
-  },
-  timeText: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-  },
-  imageMessage: {
-    width: 200,
-    height: 200,
-    borderRadius: 10,
-  },
-  imageFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingTop: 6,
-    justifyContent: 'flex-end',
-  },
-  audioContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
-  },
-  playButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  audioLabel: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  fileContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
-  },
-  fileName: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  fileSize: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-  },
-});
+// React.memo: yalnizca prop'lari degisince yeniden render edilir.
+export const SwipeableMessage = React.memo(SwipeableMessageComponent);
+
+const makeStyles = (t: Theme) =>
+  StyleSheet.create({
+    actionContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 8,
+      gap: 4,
+    },
+    actionButton: {
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      backgroundColor: t.colors.primary,
+      borderRadius: t.radius.md,
+      justifyContent: 'center',
+    },
+    forwardButton: {
+      backgroundColor: t.colors.accent,
+    },
+    deleteButton: {
+      backgroundColor: t.colors.error,
+    },
+    actionText: {
+      color: '#FFFFFF',
+      fontSize: 12 * t.fontScale,
+      fontWeight: '600',
+    },
+    quotedMessage: {
+      flexDirection: 'row',
+      marginBottom: 8,
+      paddingLeft: 8,
+      maxWidth: '80%',
+      backgroundColor: t.colors.inputBackground,
+      borderRadius: t.radius.md,
+      padding: 8,
+      gap: 8,
+    },
+    quoteBar: {
+      width: 3,
+      backgroundColor: t.colors.primary,
+      borderRadius: 2,
+    },
+    quoteAuthor: {
+      fontSize: 12 * t.fontScale,
+      fontWeight: '600',
+      color: t.colors.primary,
+    },
+    quoteText: {
+      fontSize: 13 * t.fontScale,
+      color: t.colors.textSecondary,
+      marginTop: 2,
+    },
+    messageBubble: {
+      padding: 10,
+      maxWidth: '80%',
+    },
+    myMessageBubble: {
+      backgroundColor: t.colors.myMessageBubble,
+    },
+    theirMessageBubble: {
+      backgroundColor: t.colors.theirMessageBubble,
+      borderWidth: t.colors.isDark ? 0 : 1,
+      borderColor: t.colors.border,
+    },
+    messageText: {
+      fontSize: 16 * t.fontScale,
+    },
+    highlightedText: {
+      backgroundColor: 'rgba(255, 220, 0, 0.5)',
+      color: '#000',
+      borderRadius: 3,
+    },
+    deletedText: {
+      color: t.colors.textSecondary,
+      fontSize: 14 * t.fontScale,
+      fontStyle: 'italic',
+    },
+    messageFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 4,
+      justifyContent: 'flex-end',
+    },
+    timeText: {
+      color: t.colors.textSecondary,
+      fontSize: 12 * t.fontScale,
+    },
+    imageMessage: {
+      width: 200,
+      height: 200,
+      borderRadius: t.radius.md,
+    },
+    imageFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 8,
+      paddingTop: 6,
+      justifyContent: 'flex-end',
+    },
+    audioContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      gap: 8,
+    },
+    playButton: {
+      width: 36,
+      height: 36,
+      borderRadius: t.radius.pill,
+      backgroundColor: 'rgba(0,0,0,0.2)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    audioLabel: {
+      fontSize: 14 * t.fontScale,
+      fontWeight: '500',
+    },
+    fileContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      gap: 8,
+    },
+    fileName: {
+      fontSize: 14 * t.fontScale,
+      fontWeight: '500',
+    },
+    fileSize: {
+      fontSize: 12 * t.fontScale,
+    },
+  });

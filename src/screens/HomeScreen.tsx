@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,314 +6,207 @@ import {
   TouchableOpacity,
   Image,
   StyleSheet,
-  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Settings, Search, X } from 'lucide-react-native';
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  orderBy,
-} from 'firebase/firestore';
+import { Settings, UserPlus } from 'lucide-react-native';
 
-import { db } from '../../firebaseConfig';
 import { User } from '../types';
-import { COLORS } from '../styles/baseStyles';
-import { useAppContext } from '../context/AppContext';
+import { useAppContext, useTheme } from '../context/AppContext';
 import { RootStackParamList } from '../types/navigation';
-
+import { useFriendsList } from '../hooks/useFriendsList';
+import { SearchBar } from '../components/SearchBar';
 import { FriendItem } from '../components/FriendItem';
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
-export function HomeScreen({
-  navigation,
-  forwardingMessage,
-  onForwardComplete,
-}: {
-  navigation: HomeScreenProps['navigation'];
-  forwardingMessage?: any;
-  onForwardComplete?: () => void;
-}) {
-  const { currentUser, isUserBlocked } = useAppContext();
-  const [chats, setChats] = useState<any[]>([]);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
-  const [displayList, setDisplayList] = useState<any[]>([]);
+export function HomeScreen({ navigation, route }: HomeScreenProps) {
+  const { currentUser, incomingRequests } = useAppContext();
+  const theme = useTheme();
+  const styles = React.useMemo(() => makeStyles(theme), [theme]);
+  const forwardingMessage = route.params?.forwardingMessage;
+  const forwardHandledRef = useRef(false);
+
+  const { displayList, friendsHydrated, filterBySearch } = useFriendsList();
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [filteredList, setFilteredList] = useState<any[]>([]);
+  const [filteredList, setFilteredList] = useState(displayList);
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerShown: false,
-    });
+  useEffect(() => {
+    navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
-  useEffect(() => {
-    if (!currentUser?.id) {
-      console.warn('Current user ID is not available');
-      return;
-    }
-
-    const q = query(
-      collection(db, 'users', currentUser.id, 'userChats'),
-      orderBy('updatedAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const chatsList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setChats(chatsList);
-      },
-      (error) => {
-        console.error('Error fetching user chats:', error?.message || error?.code || error);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [currentUser?.id]);
-
-  useEffect(() => {
-    if (!currentUser?.id) {
-      console.warn('Current user ID is not available');
-      return;
-    }
-
-    const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('id', '!=', currentUser.id));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const usersList = snapshot.docs.map((doc) => doc.data() as User);
-        setAllUsers(usersList);
-      },
-      (error) => {
-        console.error('Error fetching users:', error?.message || error?.code || error);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [currentUser?.id]);
-
-  useEffect(() => {
-    const chatUsers = chats.map((chat) => {
-      const friendUser: User = {
-        id: chat.id ?? '',
-        email: chat.email ?? '',
-        name: chat.name ?? 'Unknown',
-        surname: chat.surname ?? '',
-        avatar: chat.avatar ?? 'https://via.placeholder.com/50',
-        about: chat.about ?? '',
-        lastSeen: chat.lastSeen,
-        online: chat.online ?? false,
-        pushToken: chat.pushToken ?? null,
-      };
-      return { ...chat, isChat: true, friendUser };
-    }).filter((chat) => !isUserBlocked(chat.friendUser.id));
-
-    const chattedUserIds = new Set(chats.map((chat) => chat.id));
-
-    const otherUsers = allUsers
-      .filter((user) => !chattedUserIds.has(user.id) && !isUserBlocked(user.id))
-      .map((user) => ({ ...user, isChat: false }));
-
-    const combinedList = [
-      ...chatUsers,
-      ...otherUsers.sort((a, b) => ((a.name ?? '') || '').localeCompare((b.name ?? '') || '')),
-    ];
-
-    setDisplayList(combinedList);
-  }, [allUsers, chats, isUserBlocked]);
-
-  // Debounce search — 300ms gecikme
   const handleSearchChange = (text: string) => {
     setSearchQuery(text);
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    searchDebounceRef.current = setTimeout(() => {
-      setDebouncedSearch(text);
-    }, 300);
+    searchDebounceRef.current = setTimeout(() => setDebouncedSearch(text), 300);
   };
 
-  // Filter list based on debounced search query
   useEffect(() => {
-    if (!debouncedSearch.trim()) {
-      setFilteredList(displayList);
-      return;
-    }
+    setFilteredList(filterBySearch(displayList, debouncedSearch));
+  }, [debouncedSearch, displayList, filterBySearch]);
 
-    const q = debouncedSearch.toLowerCase();
-    const filtered = displayList.filter((item) => {
-      try {
-        const friend = item?.isChat ? item?.friendUser : item;
-        const firstName = (friend?.name ?? '').toString().trim().toLowerCase();
-        const lastName = (friend?.surname ?? '').toString().trim().toLowerCase();
-        const fullName = `${firstName} ${lastName}`.trim();
-        let lastMessageText = '';
-        if (item?.isChat && item?.lastMessage) {
-          lastMessageText = (item.lastMessage.text ?? '').toString().trim().toLowerCase();
-        }
-        return fullName.includes(q) || lastMessageText.includes(q);
-      } catch (error) {
-        console.warn('Filter error:', error);
-        return false;
+  const clearForwarding = useCallback(() => {
+    navigation.setParams({ forwardingMessage: undefined });
+    forwardHandledRef.current = false;
+  }, [navigation]);
+
+  const handleSelectChat = useCallback(
+    (item: any) => {
+      const friend: User = item.isChat ? item.friendUser : item;
+
+      if (forwardingMessage) {
+        if (forwardHandledRef.current) return;
+        forwardHandledRef.current = true;
+        navigation.navigate('Chat', {
+          user: currentUser!,
+          friend,
+          forwardingMessage,
+        });
+        clearForwarding();
+        return;
       }
-    });
 
-    setFilteredList(filtered);
-  }, [debouncedSearch, displayList]);
+      navigation.navigate('Chat', { user: currentUser!, friend });
+    },
+    [forwardingMessage, navigation, currentUser, clearForwarding]
+  );
 
-  const handleSelectChat = (item: any) => {
-    const friend: User = item.isChat ? item.friendUser : item;
+  const renderFriend = useCallback(
+    ({ item }: { item: any }) => (
+      <FriendItem item={item} currentUser={currentUser!} onSelect={handleSelectChat} />
+    ),
+    [currentUser, handleSelectChat]
+  );
 
-    // If forwarding a message, navigate with forwardingMessage param
-    if (forwardingMessage) {
-      navigation.navigate('Chat', {
-        user: currentUser!,
-        friend,
-        forwardingMessage
-      });
-      if (onForwardComplete) {
-        onForwardComplete();
-      }
-      return;
-    }
-
-    navigation.navigate('Chat', { user: currentUser!, friend });
-  };
-
-  // currentUser henüz yüklenmediyse boş döndür (App.tsx zaten bekletir)
   if (!currentUser) return null;
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Image
-            source={{ uri: currentUser.avatar }}
-            style={styles.headerAvatar}
-          />
+          <Image source={{ uri: currentUser.avatar }} style={styles.headerAvatar} />
           <View style={{ marginLeft: 12 }}>
             <Text style={styles.headerTitle}>{currentUser.name}</Text>
-            <Text style={{ color: COLORS.textSecondary, fontSize: 12 }}>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 12 * theme.fontScale }}>
               {currentUser.online ? 'Online' : 'Offline'}
             </Text>
           </View>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <TouchableOpacity
-            onPress={() => navigation.navigate('Settings')}
-            style={{ padding: 8 }}
+            onPress={() => navigation.navigate('AddFriend')}
+            style={styles.headerIconButton}
           >
-            <Settings size={24} color={COLORS.primary} />
+            <UserPlus size={22} color={theme.colors.primary} />
+            {incomingRequests.length > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{incomingRequests.length}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Settings')}
+            style={styles.headerIconButton}
+          >
+            <Settings size={22} color={theme.colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
-      <View style={styles.sectionTitleContainer}>
-        <Text style={styles.sectionTitle}>Chats & People</Text>
-      </View>
 
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <Search size={20} color={COLORS.textSecondary} style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search chats and people..."
-          placeholderTextColor={COLORS.textSecondary}
-          value={searchQuery}
-          onChangeText={handleSearchChange}
-        />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
-            <X size={18} color={COLORS.textSecondary} />
+      {forwardingMessage && (
+        <View style={styles.forwardBanner}>
+          <Text style={styles.forwardBannerText}>Bir sohbet seçerek mesajı iletin</Text>
+          <TouchableOpacity onPress={clearForwarding}>
+            <Text style={styles.forwardCancel}>İptal</Text>
           </TouchableOpacity>
-        )}
-      </View>
+        </View>
+      )}
 
-      <FlatList
-        data={filteredList}
-        renderItem={({ item }) => (
-          <FriendItem
-            item={item}
-            currentUser={currentUser}
-            onSelect={() => handleSelectChat(item)}
-          />
-        )}
-        keyExtractor={(item, index) => item?.id || `friend-${index}`}
-        contentContainerStyle={styles.friendsList}
-        ListEmptyComponent={
-          <Text
-            style={{
-              color: COLORS.textSecondary,
-              textAlign: 'center',
-              marginTop: 20,
-            }}
-          >
-            No users yet...
-          </Text>
-        }
+      <SearchBar
+        value={searchQuery}
+        onChangeText={handleSearchChange}
+        placeholder="Sohbet veya kişi ara..."
       />
+
+      {!friendsHydrated ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      ) : (
+        <FlatList
+          data={filteredList}
+          keyExtractor={(item) => item.id}
+          renderItem={renderFriend}
+          contentContainerStyle={{ paddingBottom: 20 }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>Henüz sohbet yok</Text>
+              <Text style={styles.emptySubtext}>Arkadaş ekleyerek mesajlaşmaya başlayın</Text>
+            </View>
+          }
+        />
+      )}
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.surface,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: COLORS.textPrimary,
-  },
-  headerAvatar: { width: 40, height: 40, borderRadius: 20 },
-  sectionTitleContainer: {
-    padding: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.inputBackground,
-    borderRadius: 12,
-    marginHorizontal: 16,
-    marginBottom: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: COLORS.surface,
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    color: COLORS.textPrimary,
-    fontSize: 16,
-  },
-  clearButton: {
-    padding: 4,
-  },
-  friendsList: { paddingHorizontal: 16 },
-});
+const makeStyles = (theme: import('../theme').Theme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: theme.colors.surface,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.colors.border,
+    },
+    headerAvatar: { width: 44, height: 44, borderRadius: 22 },
+    headerTitle: {
+      fontSize: 18 * theme.fontScale,
+      fontWeight: '600',
+      color: theme.colors.textPrimary,
+    },
+    headerIconButton: { padding: 8, position: 'relative' },
+    badge: {
+      position: 'absolute',
+      top: 2,
+      right: 2,
+      backgroundColor: theme.colors.error,
+      borderRadius: 8,
+      minWidth: 16,
+      height: 16,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 4,
+    },
+    badgeText: { color: '#FFF', fontSize: 10, fontWeight: 'bold' },
+    forwardBanner: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      backgroundColor: theme.colors.surfaceAlt,
+    },
+    forwardBannerText: { color: theme.colors.textPrimary, fontSize: 14 * theme.fontScale },
+    forwardCancel: { color: theme.colors.primary, fontWeight: '600' },
+    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    emptyContainer: { alignItems: 'center', marginTop: 60, paddingHorizontal: 32 },
+    emptyText: {
+      fontSize: 18 * theme.fontScale,
+      fontWeight: '600',
+      color: theme.colors.textPrimary,
+      marginBottom: 8,
+    },
+    emptySubtext: {
+      fontSize: 14 * theme.fontScale,
+      color: theme.colors.textSecondary,
+      textAlign: 'center',
+    },
+  });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -15,9 +15,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
-import Constants from 'expo-constants';
 import {
   Mail,
   Lock,
@@ -36,10 +33,12 @@ import {
   sendPasswordResetEmail,
   signOut,
 } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 
 import { User } from '../types';
-import { COLORS, baseStyles } from '../styles/baseStyles';
+import { useTheme } from '../context/AppContext';
+import { Theme } from '../theme';
+import { ensureFriendCode } from '../services/friends';
 
 type RootStackParamList = {
   Auth: undefined;
@@ -47,7 +46,34 @@ type RootStackParamList = {
 
 type AuthScreenProps = NativeStackScreenProps<RootStackParamList, 'Auth'>;
 
+// Firebase Auth hata kodlarini kullaniciya anlasilir Turkce mesajlara cevirir.
+// Bilinmeyen kodlarda gercek kodu gosterir; boylece asil sorun gizlenmez.
+function mapAuthError(error: any): string {
+  const code = error?.code ?? '';
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+      return 'Email veya şifre hatalı.';
+    case 'auth/invalid-email':
+      return 'Geçersiz email adresi.';
+    case 'auth/user-disabled':
+      return 'Bu hesap devre dışı bırakılmış.';
+    case 'auth/too-many-requests':
+      return 'Çok fazla deneme yapıldı. Lütfen birkaç dakika sonra tekrar deneyin.';
+    case 'auth/network-request-failed':
+      return 'İnternet bağlantısı sağlanamadı. Bağlantını kontrol edip tekrar dene.';
+    case 'auth/operation-not-allowed':
+      return 'Email/şifre girişi bu projede etkin değil.';
+    default:
+      // Bilinmeyen hata: gercek kodu goster (teshis icin)
+      return `Bir hata oluştu: ${code || error?.message || 'bilinmeyen'}`;
+  }
+}
+
 export function AuthScreen({ navigation }: AuthScreenProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
@@ -81,41 +107,28 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
     return emailRegex.test(email);
   };
 
-  const registerForPushNotificationsAsync = async () => {
-    let token;
-    try {
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'default',
-          importance: Notifications.AndroidImportance.MAX,
-        });
-      }
-
-      if (Device.isDevice) {
-        const { status: existingStatus } = await Notifications.getPermissionsAsync();
-        let finalStatus = existingStatus;
-        if (existingStatus !== 'granted') {
-          const { status } = await Notifications.requestPermissionsAsync();
-          finalStatus = status;
-        }
-        if (finalStatus !== 'granted') return null;
-
-        const tokenData = await Notifications.getExpoPushTokenAsync({
-          projectId: Constants.expoConfig?.extra?.eas?.projectId,
-        });
-        token = tokenData.data;
-      }
-    } catch (error) {
-      console.log('Bildirim tokeni alınamadı (Expo Go kısıtlaması olabilir):', error);
-      return null;
-    }
-    return token;
-  };
-
   const handleRegister = async () => {
     // 1. Boş alan kontrolü
     if (!email || !password || !name || !surname) {
       showError('Lütfen tüm alanları doldurun.');
+      return;
+    }
+
+    // 2. Email formatı kontrolü
+    if (!isValidEmail(email.trim())) {
+      showError('Geçerli bir email adresi girin.');
+      return;
+    }
+
+    // 3. Şifre uzunluğu kontrolü (Firebase minimum 6 karakter ister)
+    if (password.length < 6) {
+      showError('Şifre en az 6 karakter olmalıdır.');
+      return;
+    }
+
+    // 4. Şifre tekrarı kontrolü
+    if (password !== confirmPassword) {
+      showError('Şifreler eşleşmiyor.');
       return;
     }
 
@@ -128,18 +141,32 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       // 3. Doğrulama mailini gönder
       await sendEmailVerification(user);
 
-      // 4. KRİTİK NOKTA: Veritabanına yazma işlemi (Hala giriş yapmış durumdayız)
-      await setDoc(doc(db, 'users', user.uid), {
+      // 4. Kullanıcı profilini oluştur (arkadas kodu ensureFriendCode ile)
+      const profile: User = {
         id: user.uid,
         email: user.email ?? '',
         name: name.trim(),
         surname: surname.trim(),
         avatar: `https://ui-avatars.com/api/?name=${name}+${surname}&background=random`,
-        createdAt: serverTimestamp(),
         about: 'Merhaba, ben ChatApp kullanıyorum!',
         online: false,
+        lastSeen: null,
+      };
+
+      await setDoc(doc(db, 'users', user.uid), {
+        ...profile,
+        createdAt: serverTimestamp(),
         lastSeen: serverTimestamp(),
       });
+
+      try {
+        await ensureFriendCode(profile);
+      } catch {
+        await deleteDoc(doc(db, 'users', user.uid));
+        await signOut(auth);
+        showError('Arkadaş kodu oluşturulamadı. Lütfen tekrar deneyin.');
+        return;
+      }
 
       // 5. Veritabanı işlemi BİTTİKTEN SONRA çıkış yap
       await signOut(auth);
@@ -151,12 +178,13 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
         [{ text: 'Tamam', onPress: () => setIsLoginMode(true) }]
       );
     } catch (error: any) {
+      console.error('Register error:', error?.code, error?.message);
       if (error.code === 'auth/email-already-in-use') {
         showError('Bu email adresi zaten kullanımda.');
       } else if (error.code === 'permission-denied') {
         showError('Veritabanı yazma izni reddedildi. Lütfen internetinizi kontrol edin.');
       } else {
-        showError('Kayıt hatası: ' + error.message);
+        showError(mapAuthError(error));
       }
     } finally {
       setLoading(false);
@@ -182,17 +210,8 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       // Email doğrulandı, normal giriş akışı devam eder
       // App.tsx'deki onAuthStateChanged listener bunu otomatik olarak yönetecek
     } catch (error: any) {
-      let errorMsg = 'Giriş yapılırken bir hata oluştu. Lütfen tekrar deneyin.';
-
-      if (
-        error.code === 'auth/invalid-credential' ||
-        error.code === 'auth/user-not-found' ||
-        error.code === 'auth/wrong-password'
-      ) {
-        errorMsg = 'Email veya şifre hatalı.';
-      }
-
-      showError(errorMsg);
+      console.error('Login error:', error?.code, error?.message);
+      showError(mapAuthError(error));
     } finally {
       setLoading(false);
     }
@@ -235,10 +254,11 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       await sendPasswordResetEmail(auth, resetEmail.trim());
       setResetSuccess(true);
     } catch (error: any) {
+      console.error('Password reset error:', error?.code, error?.message);
       if (error.code === 'auth/user-not-found') {
         showError('Bu email adresiyle kayıtlı kullanıcı bulunamadı.');
       } else {
-        showError('Mail gönderilemedi. Lütfen tekrar deneyin.');
+        showError(mapAuthError(error));
       }
     } finally {
       setResetLoading(false);
@@ -266,11 +286,11 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
             {/* Header */}
             <View style={styles.modalHeader}>
               <TouchableOpacity onPress={closeForgotModal} style={styles.modalBackBtn}>
-                <ArrowLeft size={22} color={COLORS.textPrimary} />
+                <ArrowLeft size={22} color={theme.colors.textPrimary} />
               </TouchableOpacity>
               <Text style={styles.modalTitle}>Şifre Sıfırla</Text>
               <TouchableOpacity onPress={closeForgotModal} style={styles.modalCloseBtn}>
-                <X size={20} color={COLORS.textSecondary} />
+                <X size={20} color={theme.colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
@@ -280,7 +300,7 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                 <Text style={styles.successEmoji}>✉️</Text>
                 <Text style={styles.successTitle}>Mail Gönderildi!</Text>
                 <Text style={styles.successText}>
-                  <Text style={{ color: COLORS.primary, fontWeight: '600' }}>{resetEmail}</Text>
+                  <Text style={{ color: theme.colors.primary, fontWeight: '600' }}>{resetEmail}</Text>
                   {' '}adresine şifre sıfırlama bağlantısı gönderildi.{'\n'}Mailinizi kontrol edin.
                 </Text>
                 <TouchableOpacity
@@ -297,11 +317,11 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                   Kayıtlı email adresinizi girin, şifre sıfırlama bağlantısı gönderelim.
                 </Text>
                 <View style={styles.inputWrapperAuth}>
-                  <Mail size={20} color="#666" style={styles.inputIcon} />
+                  <Mail size={20} color={theme.colors.textMuted} style={styles.inputIcon} />
                   <TextInput
                     style={styles.inputAuth}
                     placeholder="Email adresiniz"
-                    placeholderTextColor="#666"
+                    placeholderTextColor={theme.colors.textMuted}
                     value={resetEmail}
                     onChangeText={setResetEmail}
                     autoCapitalize="none"
@@ -315,7 +335,7 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                   disabled={resetLoading}
                 >
                   {resetLoading ? (
-                    <ActivityIndicator color="black" />
+                    <ActivityIndicator color={theme.colors.onAccent} />
                   ) : (
                     <Text style={styles.resetButtonText}>Sıfırlama Maili Gönder</Text>
                   )}
@@ -327,32 +347,32 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       </Modal>
       {/* ──────────────────────────────────────────────────────────────────── */}
 
-      <SafeAreaView style={baseStyles.container}>
+      <SafeAreaView style={styles.container}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
           <ScrollView contentContainerStyle={styles.loginContent}>
             <View style={styles.logoContainer}>
-              <MessageSquare size={64} color={COLORS.primary} />
+              <MessageSquare size={64} color={theme.colors.primary} />
             </View>
-            <Text style={baseStyles.title}>Mesajlar</Text>
+            <Text style={styles.title}>Mesajlar</Text>
 
             {needsVerification ? (
               /* Verification UI */
               <View style={styles.verificationContainer}>
-                <AlertCircle size={48} color={COLORS.error} style={{ marginBottom: 16 }} />
+                <AlertCircle size={48} color={theme.colors.error} style={{ marginBottom: 16 }} />
                 <Text style={styles.verificationTitle}>Email Doğrulanmadı</Text>
                 <Text style={styles.verificationText}>
-                  Devam edebilmek için <Text style={{ fontWeight: '700', color: COLORS.textPrimary }}>{email}</Text> adresine gönderilen doğrulama bağlantısına tıklamanız gerekmektedir.
+                  Devam edebilmek için <Text style={{ fontWeight: '700', color: theme.colors.textPrimary }}>{email}</Text> adresine gönderilen doğrulama bağlantısına tıklamanız gerekmektedir.
                 </Text>
 
                 <TouchableOpacity
-                  style={[baseStyles.button, { width: '100%', marginBottom: 12 }]}
+                  style={[styles.button, { width: '100%', marginBottom: 12 }]}
                   onPress={handleResendVerification}
                   disabled={isResending}
                 >
                   {isResending ? (
-                    <ActivityIndicator color="black" />
+                    <ActivityIndicator color={theme.colors.onAccent} />
                   ) : (
-                    <Text style={baseStyles.buttonText}>Doğrulama Mailini Tekrar Gönder</Text>
+                    <Text style={styles.buttonText}>Doğrulama Mailini Tekrar Gönder</Text>
                   )}
                 </TouchableOpacity>
 
@@ -366,33 +386,33 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
             ) : (
               /* Normal Auth Form */
               <>
-                <Text style={baseStyles.subtitle}>{isLoginMode ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
+                <Text style={styles.subtitle}>{isLoginMode ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
                 {errorMessage && (
-                  <View style={baseStyles.errorContainer}>
+                  <View style={styles.errorContainer}>
                     <AlertCircle color="#FFF" size={20} style={{ marginRight: 8 }} />
-                    <Text style={baseStyles.errorText}>{errorMessage}</Text>
+                    <Text style={styles.errorText}>{errorMessage}</Text>
                   </View>
                 )}
                 <View style={styles.inputContainer}>
                   {!isLoginMode && (
                     <>
                       <View style={styles.inputWrapperAuth}>
-                        <UserIcon size={20} color="#666" style={styles.inputIcon} />
+                        <UserIcon size={20} color={theme.colors.textMuted} style={styles.inputIcon} />
                         <TextInput
                           style={styles.inputAuth}
                           placeholder="Ad"
-                          placeholderTextColor="#666"
+                          placeholderTextColor={theme.colors.textMuted}
                           value={name}
                           onChangeText={setName}
                           autoCapitalize="words"
                         />
                       </View>
                       <View style={styles.inputWrapperAuth}>
-                        <UserIcon size={20} color="#666" style={styles.inputIcon} />
+                        <UserIcon size={20} color={theme.colors.textMuted} style={styles.inputIcon} />
                         <TextInput
                           style={styles.inputAuth}
                           placeholder="Soyad"
-                          placeholderTextColor="#666"
+                          placeholderTextColor={theme.colors.textMuted}
                           value={surname}
                           onChangeText={setSurname}
                           autoCapitalize="words"
@@ -401,11 +421,11 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                     </>
                   )}
                   <View style={styles.inputWrapperAuth}>
-                    <Mail size={20} color="#666" style={styles.inputIcon} />
+                    <Mail size={20} color={theme.colors.textMuted} style={styles.inputIcon} />
                     <TextInput
                       style={styles.inputAuth}
                       placeholder="Email"
-                      placeholderTextColor="#666"
+                      placeholderTextColor={theme.colors.textMuted}
                       value={email}
                       onChangeText={setEmail}
                       autoCapitalize="none"
@@ -413,11 +433,11 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                     />
                   </View>
                   <View style={styles.inputWrapperAuth}>
-                    <Lock size={20} color="#666" style={styles.inputIcon} />
+                    <Lock size={20} color={theme.colors.textMuted} style={styles.inputIcon} />
                     <TextInput
                       style={styles.inputAuth}
                       placeholder="Şifre"
-                      placeholderTextColor="#666"
+                      placeholderTextColor={theme.colors.textMuted}
                       value={password}
                       onChangeText={setPassword}
                       secureTextEntry
@@ -425,11 +445,11 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                   </View>
                   {!isLoginMode && (
                     <View style={styles.inputWrapperAuth}>
-                      <Lock size={20} color="#666" style={styles.inputIcon} />
+                      <Lock size={20} color={theme.colors.textMuted} style={styles.inputIcon} />
                       <TextInput
                         style={styles.inputAuth}
                         placeholder="Tekrar Şifre"
-                        placeholderTextColor="#666"
+                        placeholderTextColor={theme.colors.textMuted}
                         value={confirmPassword}
                         onChangeText={setConfirmPassword}
                         secureTextEntry
@@ -439,14 +459,14 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                 </View>
 
                 <TouchableOpacity
-                  style={baseStyles.button}
+                  style={styles.button}
                   onPress={isLoginMode ? handleLogin : handleRegister}
                   disabled={loading}
                 >
                   {loading ? (
-                    <ActivityIndicator color="black" />
+                    <ActivityIndicator color={theme.colors.onAccent} />
                   ) : (
-                    <Text style={baseStyles.buttonText}>{isLoginMode ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
+                    <Text style={styles.buttonText}>{isLoginMode ? 'Giriş Yap' : 'Kayıt Ol'}</Text>
                   )}
                 </TouchableOpacity>
 
@@ -460,7 +480,7 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                       setShowForgotModal(true);
                     }}
                   >
-                    <Text style={{ color: COLORS.primary, fontSize: 14 }}>Şifremi Unuttum?</Text>
+                    <Text style={{ color: theme.colors.primary, fontSize: 14 }}>Şifremi Unuttum?</Text>
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity
@@ -470,7 +490,7 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
                     setErrorMessage(null);
                   }}
                 >
-                  <Text style={{ color: COLORS.textSecondary }}>
+                  <Text style={{ color: theme.colors.textSecondary }}>
                     {isLoginMode ? 'Hesabın yok mu? Kayıt Ol' : 'Zaten hesabın var mı? Giriş Yap'}
                   </Text>
                 </TouchableOpacity>
@@ -483,146 +503,189 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
-  loginContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  logoContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: COLORS.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 24,
-    borderWidth: 2,
-    borderColor: COLORS.primary,
-  },
-  inputContainer: {
-    width: '100%',
-    marginBottom: 24,
-  },
-  inputWrapperAuth: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.inputBackground,
-    borderRadius: 12,
-    marginBottom: 12,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: COLORS.surface,
-  },
-  inputIcon: {
-    marginRight: 10,
-  },
-  inputAuth: {
-    flex: 1,
-    paddingVertical: 16,
-    fontSize: 16,
-    color: COLORS.textPrimary,
-  },
-  // ─── Forgot Password Modal ───────────────────────────────────────────────
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
-  modalCard: {
-    backgroundColor: COLORS.background,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    padding: 24,
-    paddingBottom: 40,
-    minHeight: 340,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalBackBtn: {
-    padding: 4,
-    marginRight: 8,
-  },
-  modalTitle: {
-    flex: 1,
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  modalCloseBtn: {
-    padding: 4,
-  },
-  modalSubtitle: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  resetButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  resetButtonText: {
-    color: '#000',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  successContainer: {
-    alignItems: 'center',
-    paddingTop: 8,
-  },
-  successEmoji: {
-    fontSize: 52,
-    marginBottom: 12,
-  },
-  successTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 12,
-  },
-  successText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  verificationContainer: {
-    width: '100%',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    padding: 24,
-    borderRadius: 20,
-    marginTop: 20,
-    borderWidth: 1,
-    borderColor: COLORS.error + '40', // 25% opacity
-  },
-  verificationTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 12,
-  },
-  verificationText: {
-    color: COLORS.textSecondary,
-    fontSize: 15,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
-  },
-  backToLoginBtn: {
-    padding: 12,
-  },
-  backToLoginText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-});
+const makeStyles = (t: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    title: {
+      fontSize: 28 * t.fontScale,
+      fontWeight: 'bold',
+      color: t.colors.textPrimary,
+      marginBottom: 8,
+    },
+    subtitle: {
+      fontSize: 16 * t.fontScale,
+      color: t.colors.textSecondary,
+      marginBottom: 32,
+    },
+    errorContainer: {
+      width: '100%',
+      backgroundColor: t.colors.error,
+      padding: 12,
+      borderRadius: t.radius.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 20,
+    },
+    errorText: {
+      color: '#FFF',
+      fontSize: 14 * t.fontScale,
+      fontWeight: '600',
+      flex: 1,
+    },
+    button: {
+      width: '100%',
+      backgroundColor: t.colors.primary,
+      borderRadius: t.radius.pill,
+      padding: 16,
+      alignItems: 'center',
+    },
+    buttonText: {
+      color: t.colors.onAccent,
+      fontSize: 16 * t.fontScale,
+      fontWeight: 'bold',
+    },
+    loginContent: {
+      flexGrow: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 24,
+    },
+    logoContainer: {
+      width: 100,
+      height: 100,
+      borderRadius: t.radius.pill,
+      backgroundColor: t.colors.surface,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 24,
+      borderWidth: 2,
+      borderColor: t.colors.primary,
+    },
+    inputContainer: {
+      width: '100%',
+      marginBottom: 24,
+    },
+    inputWrapperAuth: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: t.colors.inputBackground,
+      borderRadius: t.radius.lg,
+      marginBottom: 12,
+      paddingHorizontal: 14,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    inputIcon: {
+      marginRight: 10,
+    },
+    inputAuth: {
+      flex: 1,
+      paddingVertical: 16,
+      fontSize: 16 * t.fontScale,
+      color: t.colors.textPrimary,
+    },
+    // ─── Forgot Password Modal ───────────────────────────────────────────────
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: t.colors.overlay,
+      justifyContent: 'flex-end',
+    },
+    modalCard: {
+      backgroundColor: t.colors.surface,
+      borderTopLeftRadius: t.radius.xl,
+      borderTopRightRadius: t.radius.xl,
+      padding: 24,
+      paddingBottom: 40,
+      minHeight: 340,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 20,
+    },
+    modalBackBtn: {
+      padding: 4,
+      marginRight: 8,
+    },
+    modalTitle: {
+      flex: 1,
+      fontSize: 20 * t.fontScale,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    modalCloseBtn: {
+      padding: 4,
+    },
+    modalSubtitle: {
+      color: t.colors.textSecondary,
+      fontSize: 14 * t.fontScale,
+      marginBottom: 20,
+      lineHeight: 20,
+    },
+    resetButton: {
+      backgroundColor: t.colors.primary,
+      borderRadius: t.radius.pill,
+      paddingVertical: 16,
+      alignItems: 'center',
+      marginTop: 8,
+    },
+    resetButtonText: {
+      color: t.colors.onAccent,
+      fontWeight: '700',
+      fontSize: 16 * t.fontScale,
+    },
+    successContainer: {
+      alignItems: 'center',
+      paddingTop: 8,
+    },
+    successEmoji: {
+      fontSize: 52,
+      marginBottom: 12,
+    },
+    successTitle: {
+      fontSize: 22 * t.fontScale,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+      marginBottom: 12,
+    },
+    successText: {
+      color: t.colors.textSecondary,
+      fontSize: 14 * t.fontScale,
+      textAlign: 'center',
+      lineHeight: 22,
+    },
+    verificationContainer: {
+      width: '100%',
+      alignItems: 'center',
+      backgroundColor: t.colors.surface,
+      padding: 24,
+      borderRadius: t.radius.xl,
+      marginTop: 20,
+      borderWidth: 1,
+      borderColor: t.colors.error + '40',
+    },
+    verificationTitle: {
+      fontSize: 20 * t.fontScale,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+      marginBottom: 12,
+    },
+    verificationText: {
+      color: t.colors.textSecondary,
+      fontSize: 15 * t.fontScale,
+      textAlign: 'center',
+      lineHeight: 22,
+      marginBottom: 24,
+    },
+    backToLoginBtn: {
+      padding: 12,
+    },
+    backToLoginText: {
+      color: t.colors.textSecondary,
+      fontSize: 14 * t.fontScale,
+      fontWeight: '600',
+    },
+  });

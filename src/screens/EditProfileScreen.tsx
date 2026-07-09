@@ -1,4 +1,4 @@
-import React, { useState, useLayoutEffect } from 'react';
+import React, { useState, useLayoutEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,23 +18,25 @@ import * as ImagePicker from 'expo-image-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { doc, updateDoc } from 'firebase/firestore';
 
+import { uploadToCloudinary } from '../services/media';
+
 import { db } from '../../firebaseConfig';
 import { User } from '../types';
-import { COLORS } from '../styles/baseStyles';
-import { useAppContext } from '../context/AppContext';
+import { useAppContext, useTheme } from '../context/AppContext';
+import { Theme } from '../theme';
 import { RootStackParamList } from '../types/navigation';
 
 type EditProfileScreenProps = NativeStackScreenProps<RootStackParamList, 'EditProfile'>;
 
 export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
   const { currentUser, setCurrentUser } = useAppContext();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [name, setName] = useState(currentUser?.name ?? 'Unknown');
   const [surname, setSurname] = useState(currentUser?.surname ?? '');
   const [about, setAbout] = useState(currentUser?.about ?? '');
   const [avatar, setAvatar] = useState(currentUser?.avatar ?? 'https://via.placeholder.com/100');
   const [loading, setLoading] = useState(false);
-
-  if (!currentUser) return null;
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -42,27 +44,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
     });
   }, [navigation]);
 
-  const uploadToCloudinary = async (imageUri: string): Promise<string> => {
-    const formData = new FormData();
-    formData.append('file', {
-      uri: imageUri,
-      type: 'image/jpeg',
-      name: 'avatar.jpg',
-    } as any);
-    formData.append('upload_preset', 'my_app');
-
-    const response = await fetch('https://api.cloudinary.com/v1_1/dhrtxb1ou/image/upload', {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error('Upload failed');
-    }
-
-    const data = await response.json();
-    return data.secure_url;
-  };
+  if (!currentUser) return null;
 
   const handlePickAvatar = async () => {
     try {
@@ -81,7 +63,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
 
       if (!result.canceled && result.assets[0]) {
         setLoading(true);
-        const avatarUrl = await uploadToCloudinary(result.assets[0].uri);
+        const avatarUrl = await uploadToCloudinary(result.assets[0].uri, 'avatar.jpg', 'image/jpeg');
         setAvatar(avatarUrl);
       }
     } catch (error) {
@@ -132,7 +114,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <ChevronLeft size={24} color={COLORS.textPrimary} />
+            <ChevronLeft size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Profili Düzenle</Text>
           <View style={{ width: 40 }} />
@@ -143,7 +125,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
             <View style={styles.avatarWrapper}>
               <Image source={{ uri: avatar }} style={styles.avatar} />
               <TouchableOpacity style={styles.cameraButton} onPress={handlePickAvatar} disabled={loading}>
-                {loading ? <ActivityIndicator size="small" color="#FFF" /> : <Camera size={20} color="#FFF" />}
+                {loading ? <ActivityIndicator size="small" color={theme.colors.onAccent} /> : <Camera size={20} color={theme.colors.onAccent} />}
               </TouchableOpacity>
             </View>
           </View>
@@ -153,7 +135,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
             <TextInput
               style={styles.input}
               placeholder="Ad"
-              placeholderTextColor={COLORS.textSecondary}
+              placeholderTextColor={theme.colors.textSecondary}
               value={name}
               onChangeText={setName}
             />
@@ -164,7 +146,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
             <TextInput
               style={styles.input}
               placeholder="Soyad"
-              placeholderTextColor={COLORS.textSecondary}
+              placeholderTextColor={theme.colors.textSecondary}
               value={surname}
               onChangeText={setSurname}
             />
@@ -175,7 +157,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
             <TextInput
               style={[styles.input, styles.aboutInput]}
               placeholder="Kendinden bahset..."
-              placeholderTextColor={COLORS.textSecondary}
+              placeholderTextColor={theme.colors.textSecondary}
               value={about}
               onChangeText={setAbout}
               multiline
@@ -192,7 +174,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
           </View>
 
           <TouchableOpacity style={[styles.saveButton, loading && { opacity: 0.6 }]} onPress={handleSave} disabled={loading}>
-            {loading ? <ActivityIndicator size="small" color="#000" /> : <Text style={styles.saveText}>Kaydet</Text>}
+            {loading ? <ActivityIndicator size="small" color={theme.colors.onAccent} /> : <Text style={styles.saveText}>Kaydet</Text>}
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -200,96 +182,100 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.surface,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-  },
-  headerTitle: {
-    color: COLORS.textPrimary,
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingVertical: 24,
-  },
-  avatarContainer: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  avatarWrapper: {
-    position: 'relative',
-  },
-  avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: COLORS.surface,
-  },
-  cameraButton: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: COLORS.primary,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  section: {
-    marginBottom: 20,
-  },
-  sectionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: COLORS.inputBackground,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: COLORS.textPrimary,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: COLORS.surface,
-  },
-  aboutInput: {
-    minHeight: 100,
-    paddingTop: 12,
-  },
-  emailText: {
-    color: COLORS.textPrimary,
-    fontSize: 16,
-  },
-  saveButton: {
-    width: '100%',
-    backgroundColor: COLORS.primary,
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  saveText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-});
+const makeStyles = (t: Theme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: t.colors.background },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+      backgroundColor: t.colors.headerBackground,
+    },
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: t.radius.pill,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: t.colors.surfaceAlt,
+    },
+    headerTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 20 * t.fontScale,
+      fontWeight: '700',
+    },
+    content: {
+      paddingHorizontal: 16,
+      paddingVertical: 24,
+    },
+    avatarContainer: {
+      alignItems: 'center',
+      marginBottom: 32,
+    },
+    avatarWrapper: {
+      position: 'relative',
+    },
+    avatar: {
+      width: 120,
+      height: 120,
+      borderRadius: t.radius.pill,
+      backgroundColor: t.colors.surface,
+    },
+    cameraButton: {
+      position: 'absolute',
+      bottom: 0,
+      right: 0,
+      backgroundColor: t.colors.primary,
+      width: 40,
+      height: 40,
+      borderRadius: t.radius.pill,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 2,
+      borderColor: t.colors.background,
+    },
+    section: {
+      marginBottom: 20,
+    },
+    sectionLabel: {
+      fontSize: 14 * t.fontScale,
+      fontWeight: '600',
+      color: t.colors.textSecondary,
+      marginBottom: 8,
+    },
+    input: {
+      backgroundColor: t.colors.inputBackground,
+      borderRadius: t.radius.lg,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      color: t.colors.textPrimary,
+      fontSize: 16 * t.fontScale,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    aboutInput: {
+      minHeight: 100,
+      paddingTop: 12,
+    },
+    emailText: {
+      color: t.colors.textPrimary,
+      fontSize: 16 * t.fontScale,
+    },
+    saveButton: {
+      width: '100%',
+      backgroundColor: t.colors.primary,
+      borderRadius: t.radius.lg,
+      padding: 16,
+      alignItems: 'center',
+      marginTop: 12,
+    },
+    saveText: {
+      color: t.colors.onAccent,
+      fontSize: 16 * t.fontScale,
+      fontWeight: '700',
+    },
+  });

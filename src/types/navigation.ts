@@ -2,7 +2,7 @@ import { Message, User } from './index';
 
 export type RootStackParamList = {
   Auth: undefined;
-  Home: undefined;
+  Home: { forwardingMessage?: Message } | undefined;
   Chat: {
     user: User;
     friend: User;
@@ -13,6 +13,7 @@ export type RootStackParamList = {
   };
   Settings: undefined;
   EditProfile: undefined;
+  AddFriend: undefined;
   Themes: undefined;
   Security: undefined;
   Privacy: undefined;

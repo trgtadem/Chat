@@ -1,4 +1,4 @@
-import React, { useLayoutEffect } from 'react';
+import React, { useLayoutEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,8 +21,9 @@ import {
 } from 'lucide-react-native';
 import Constants from 'expo-constants';
 
-import { COLORS } from '../styles/baseStyles';
 import { RootStackParamList } from '../types/navigation';
+import { useTheme } from '../context/AppContext';
+import { Theme } from '../theme';
 
 type SettingsScreenProps = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -32,19 +33,21 @@ type SettingItemProps = {
   icon: React.ReactNode;
   onPress?: () => void;
   value?: string;
+  styles: ReturnType<typeof makeStyles>;
+  chevronColor: string;
 };
 
-function SettingItem({ title, subtitle, icon, onPress, value }: SettingItemProps) {
+function SettingItem({ title, subtitle, icon, onPress, value, styles, chevronColor }: SettingItemProps) {
   const content = (
     <>
       <View style={styles.itemLeft}>
         <View style={styles.iconContainer}>{icon}</View>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.itemTitle}>{title}</Text>
           {subtitle ? <Text style={styles.itemSubtitle}>{subtitle}</Text> : null}
         </View>
       </View>
-      {value ? <Text style={styles.itemValue}>{value}</Text> : <ChevronRight size={18} color={COLORS.textSecondary} />}
+      {value ? <Text style={styles.itemValue}>{value}</Text> : <ChevronRight size={18} color={chevronColor} />}
     </>
   );
 
@@ -60,10 +63,11 @@ function SettingItem({ title, subtitle, icon, onPress, value }: SettingItemProps
 }
 
 export function SettingsScreen({ navigation }: SettingsScreenProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+
   useLayoutEffect(() => {
-    navigation.setOptions({
-      headerShown: false,
-    });
+    navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
   const appVersion = Constants.expoConfig?.version ?? 'Unknown';
@@ -72,7 +76,7 @@ export function SettingsScreen({ navigation }: SettingsScreenProps) {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <ChevronLeft size={24} color={COLORS.textPrimary} />
+          <ChevronLeft size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Ayarlar</Text>
         <View style={{ width: 40 }} />
@@ -84,8 +88,10 @@ export function SettingsScreen({ navigation }: SettingsScreenProps) {
           <SettingItem
             title="Profili Düzenle"
             subtitle="Ad, soyad, fotoğraf ve hakkımda"
-            icon={<UserRound size={18} color={COLORS.primary} />}
+            icon={<UserRound size={18} color={theme.colors.primary} />}
             onPress={() => navigation.navigate('EditProfile')}
+            styles={styles}
+            chevronColor={theme.colors.textSecondary}
           />
         </View>
 
@@ -93,27 +99,35 @@ export function SettingsScreen({ navigation }: SettingsScreenProps) {
           <Text style={styles.sectionTitle}>Tercihler</Text>
           <SettingItem
             title="Temalar"
-            subtitle="Görünüm ve sohbet tasarımı"
-            icon={<Palette size={18} color={COLORS.primary} />}
+            subtitle="Görünüm, renk ve sohbet tasarımı"
+            icon={<Palette size={18} color={theme.colors.primary} />}
             onPress={() => navigation.navigate('Themes')}
+            styles={styles}
+            chevronColor={theme.colors.textSecondary}
           />
           <SettingItem
             title="Güvenlik"
             subtitle="Hesap ve oturum yönetimi"
-            icon={<Shield size={18} color={COLORS.primary} />}
+            icon={<Shield size={18} color={theme.colors.primary} />}
             onPress={() => navigation.navigate('Security')}
+            styles={styles}
+            chevronColor={theme.colors.textSecondary}
           />
           <SettingItem
             title="Gizlilik"
             subtitle="Profil ve mesajlaşma gizliliği"
-            icon={<Lock size={18} color={COLORS.primary} />}
+            icon={<Lock size={18} color={theme.colors.primary} />}
             onPress={() => navigation.navigate('Privacy')}
+            styles={styles}
+            chevronColor={theme.colors.textSecondary}
           />
           <SettingItem
             title="Engellenen Kullanıcılar"
             subtitle="Engellediğin kişileri yönet"
-            icon={<Ban size={18} color={COLORS.primary} />}
+            icon={<Ban size={18} color={theme.colors.primary} />}
             onPress={() => navigation.navigate('BlockedUsers')}
+            styles={styles}
+            chevronColor={theme.colors.textSecondary}
           />
         </View>
 
@@ -122,14 +136,18 @@ export function SettingsScreen({ navigation }: SettingsScreenProps) {
           <SettingItem
             title="Hakkında"
             subtitle="Uygulama ve geliştirici bilgileri"
-            icon={<Info size={18} color={COLORS.primary} />}
+            icon={<Info size={18} color={theme.colors.primary} />}
             onPress={() => navigation.navigate('About')}
+            styles={styles}
+            chevronColor={theme.colors.textSecondary}
           />
           <SettingItem
             title="Versiyon"
             subtitle="Yüklü sürüm"
-            icon={<AppWindow size={18} color={COLORS.primary} />}
+            icon={<AppWindow size={18} color={theme.colors.primary} />}
             value={appVersion}
+            styles={styles}
+            chevronColor={theme.colors.textSecondary}
           />
         </View>
       </ScrollView>
@@ -137,86 +155,88 @@ export function SettingsScreen({ navigation }: SettingsScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.surface,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  content: {
-    padding: 16,
-    gap: 16,
-  },
-  sectionCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  sectionTitle: {
-    color: COLORS.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-  },
-  item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(148, 163, 184, 0.14)',
-  },
-  itemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  iconContainer: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(59,130,246,0.16)',
-  },
-  itemTitle: {
-    color: COLORS.textPrimary,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  itemSubtitle: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  itemValue: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-});
+const makeStyles = (t: Theme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: t.colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: t.colors.border,
+      backgroundColor: t.colors.headerBackground,
+    },
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: t.radius.pill,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: t.colors.surfaceAlt,
+    },
+    headerTitle: {
+      fontSize: 20 * t.fontScale,
+      fontWeight: '700',
+      color: t.colors.textPrimary,
+    },
+    content: {
+      padding: 16,
+      gap: 16,
+    },
+    sectionCard: {
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radius.xl,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    sectionTitle: {
+      color: t.colors.textSecondary,
+      fontSize: 13 * t.fontScale,
+      fontWeight: '600',
+      marginBottom: 6,
+      textTransform: 'uppercase',
+    },
+    item: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 14,
+      borderTopWidth: 1,
+      borderTopColor: t.colors.border,
+    },
+    itemLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      flex: 1,
+    },
+    iconContainer: {
+      width: 38,
+      height: 38,
+      borderRadius: t.radius.md,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: t.colors.surfaceAlt,
+    },
+    itemTitle: {
+      color: t.colors.textPrimary,
+      fontSize: 16 * t.fontScale,
+      fontWeight: '600',
+    },
+    itemSubtitle: {
+      color: t.colors.textSecondary,
+      fontSize: 12 * t.fontScale,
+      marginTop: 2,
+    },
+    itemValue: {
+      color: t.colors.textSecondary,
+      fontSize: 14 * t.fontScale,
+      fontWeight: '600',
+    },
+  });
