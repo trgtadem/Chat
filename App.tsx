@@ -1,5 +1,4 @@
 import React, { useEffect } from 'react';
-import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
@@ -8,20 +7,20 @@ import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 import { auth, db } from './firebaseConfig';
 import { AppProvider, useAppContext } from './src/context/AppContext';
+import { FeedbackProvider } from './src/feedback/FeedbackContext';
 import { useAuthBootstrap, useOnlinePresence } from './src/hooks/useAuthBootstrap';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { clearPushTokenOnLogout } from './src/services/notifications';
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => {
-    const isForeground = AppState.currentState === 'active';
-    return {
-      shouldShowAlert: !isForeground,
-      shouldPlaySound: !isForeground,
-      shouldSetBadge: false,
-      shouldShowBanner: !isForeground,
-      shouldShowList: true,
-    };
-  },
+  handleNotification: async () => ({
+    // On planda da goster — aksi halde testte "gelmiyor" sanilir
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
 });
 
 function AppInner() {
@@ -30,6 +29,7 @@ function AppInner() {
   const handleLogout = async () => {
     try {
       if (currentUser?.id) {
+        await clearPushTokenOnLogout(currentUser.id);
         await updateDoc(doc(db, 'users', currentUser.id), {
           online: false,
           lastSeen: serverTimestamp(),
@@ -56,7 +56,9 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AppProvider>
-          <AppInner />
+          <FeedbackProvider>
+            <AppInner />
+          </FeedbackProvider>
         </AppProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

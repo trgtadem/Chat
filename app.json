@@ -13,7 +13,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Arkadaş eklemek ve görüntülü arama için kamera erişimi gerekir.",
+        "NSMicrophoneUsageDescription": "Sesli mesaj ve arama için mikrofon erişimi gerekir."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -22,7 +26,15 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.adem_t.MyGameApp"
+      "package": "com.adem_t.MyGameApp",
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "POST_NOTIFICATIONS",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -30,11 +42,34 @@
     "extra": {
       "eas": {
         "projectId": "23b216cc-6077-4732-958a-e9eb73417cf6"
+      },
+      "zego": {
+        "appID": 0,
+        "appSign": ""
       }
     },
     "plugins": [
-      "expo-audio",
-      "expo-video"
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Sesli mesaj göndermek için mikrofon erişimi gerekir."
+        }
+      ],
+      "expo-video",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/adaptive-icon.png",
+          "color": "#3B82F6",
+          "defaultChannel": "default"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Arkadaş eklemek için QR kod taramak üzere kamera erişimi gerekir."
+        }
+      ]
     ]
   }
 }
