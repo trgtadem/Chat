@@ -42,8 +42,9 @@ const makeStyles = (theme: Theme) =>
       paddingHorizontal: 12,
       paddingVertical: 8,
       gap: 8,
-      marginHorizontal: 16,
-      marginBottom: 8,
+      marginHorizontal: 12,
+      marginTop: 6,
+      marginBottom: 4,
     },
     input: {
       flex: 1,

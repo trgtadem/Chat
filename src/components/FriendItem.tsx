@@ -1,29 +1,63 @@
 import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { Pin, BellOff } from 'lucide-react-native';
 
 import { User } from '../types';
 import { useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
 import { formatTime, formatLastSeen } from '../utils';
+import { HomeListItem } from '../hooks/useFriendsList';
 
-// OR a User object (for users without existing chats).
-const FriendItemComponent = ({ item, currentUser, onSelect }: { item: any; currentUser: User; onSelect: (u: any) => void }) => {
+type Props = {
+  item: HomeListItem;
+  currentUser: User;
+  onSelect: (u: HomeListItem) => void;
+  onLongPress?: (u: HomeListItem) => void;
+};
+
+const FriendItemComponent = ({ item, currentUser, onSelect, onLongPress }: Props) => {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  // Conditionally access lastMessage and unreadCount
   const lastMessage = item.isChat ? item.lastMessage : undefined;
-  const unreadCount = item.isChat ? (item.unreadCount || 0) : 0;
-  const friend = item.isChat ? item.friendUser : item; // The actual friend User object
+  const unreadCount = item.isChat ? item.unreadCount || 0 : 0;
+  const friend = item.friendUser;
+
+  const preview = lastMessage
+    ? (lastMessage.senderId === currentUser.id ? 'Siz: ' : '') +
+      (lastMessage.text ??
+        (lastMessage.type === 'image'
+          ? 'Fotoğraf'
+          : lastMessage.type === 'video'
+            ? 'Video'
+            : lastMessage.type === 'audio'
+              ? 'Sesli mesaj'
+              : 'Medya'))
+    : 'Sohbet başlatın';
 
   return (
-    <TouchableOpacity style={styles.friendItem} onPress={() => onSelect(item)} activeOpacity={0.7}>
+    <TouchableOpacity
+      style={[styles.friendItem, item.pinned && styles.pinnedItem]}
+      onPress={() => onSelect(item)}
+      onLongPress={() => onLongPress?.(item)}
+      delayLongPress={350}
+      activeOpacity={0.7}
+    >
       <View style={styles.avatarContainer}>
-        <Image source={{ uri: friend?.avatar ?? 'https://via.placeholder.com/50' }} style={styles.avatar} />
+        <Image
+          source={{ uri: friend?.avatar ?? 'https://via.placeholder.com/50' }}
+          style={styles.avatar}
+        />
         {friend?.online && <View style={styles.onlineIndicator} />}
       </View>
       <View style={styles.friendInfo}>
         <View style={styles.friendNameContainer}>
-          <Text style={styles.friendName}>{(friend?.name ?? 'Unknown')} {(friend?.surname ?? '')}</Text>
+          <View style={styles.nameRow}>
+            {item.pinned ? <Pin size={12} color={theme.colors.primary} /> : null}
+            <Text style={styles.friendName}>
+              {(friend?.name ?? 'Unknown') + ' ' + (friend?.surname ?? '')}
+            </Text>
+            {item.muted ? <BellOff size={12} color={theme.colors.textSecondary} /> : null}
+          </View>
           {lastMessage && lastMessage.createdAt ? (
             <Text style={styles.timestamp}>{formatTime(lastMessage.createdAt)}</Text>
           ) : friend?.lastSeen && !friend?.online ? (
@@ -32,7 +66,7 @@ const FriendItemComponent = ({ item, currentUser, onSelect }: { item: any; curre
         </View>
         <View style={styles.lastMessageContainer}>
           <Text style={styles.lastMessage} numberOfLines={1}>
-            {lastMessage ? (lastMessage.senderId === currentUser.id ? 'Siz: ' + (lastMessage.text ?? 'Resim/Dosya') : (lastMessage.text ?? 'Resim/Dosya')) : 'Sohbet başlatın'}
+            {preview}
           </Text>
           {unreadCount > 0 && (
             <View style={styles.unreadBadge}>
@@ -59,6 +93,9 @@ const makeStyles = (t: Theme) =>
       borderWidth: 1,
       borderColor: t.colors.border,
     },
+    pinnedItem: {
+      borderColor: `${t.colors.primary}66`,
+    },
     avatarContainer: { position: 'relative', marginRight: 12 },
     avatar: { width: 50, height: 50, borderRadius: t.radius.pill },
     onlineIndicator: {
@@ -73,11 +110,30 @@ const makeStyles = (t: Theme) =>
       borderColor: t.colors.surface,
     },
     friendInfo: { flex: 1, justifyContent: 'center' },
-    friendNameContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-    friendName: { fontSize: 16 * t.fontScale, fontWeight: 'bold', color: t.colors.textPrimary },
+    friendNameContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+    },
+    nameRow: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, marginRight: 8 },
+    friendName: {
+      fontSize: 16 * t.fontScale,
+      fontWeight: 'bold',
+      color: t.colors.textPrimary,
+      flexShrink: 1,
+    },
     timestamp: { fontSize: 12 * t.fontScale, color: t.colors.textSecondary },
-    lastMessageContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    lastMessage: { fontSize: 14 * t.fontScale, color: t.colors.textSecondary, flex: 1, marginRight: 8 },
+    lastMessageContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    lastMessage: {
+      fontSize: 14 * t.fontScale,
+      color: t.colors.textSecondary,
+      flex: 1,
+      marginRight: 8,
+    },
     unreadBadge: {
       minWidth: 20,
       height: 20,

@@ -1,22 +1,35 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Image,
   TouchableOpacity,
-  Alert,
+  Pressable,
+  Animated,
+  Linking,
 } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
-import { Check, CheckCheck, Play, Pause, Download } from 'lucide-react-native';
-import * as AudioModule from 'expo-audio';
+import {
+  PanGestureHandler,
+  PanGestureHandlerGestureEvent,
+  PanGestureHandlerStateChangeEvent,
+  State,
+} from 'react-native-gesture-handler';
+import { Check, CheckCheck, Play, Pause, Download, Reply, Film } from 'lucide-react-native';
+import { createAudioPlayer, AudioPlayer } from 'expo-audio';
+import { useVideoPlayer, VideoView } from 'expo-video';
 
 import { Message } from '../types';
 import { useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
 import { formatTime } from '../utils';
+import { useFeedback } from '../feedback/FeedbackContext';
 
-// Balon kose yaricapini secili balon stiline gore hesaplar
+/** Sag kaydirma mesafesi (px) */
+const REPLY_TRAVEL = 64;
+/** Bu esigi gecince yanit tetiklenir */
+const REPLY_THRESHOLD = 40;
+
 function bubbleShape(t: Theme, isMe: boolean) {
   if (t.bubbleStyle === 'rounded') {
     return { borderRadius: t.radius.lg };
@@ -24,53 +37,60 @@ function bubbleShape(t: Theme, isMe: boolean) {
   if (t.bubbleStyle === 'minimal') {
     return { borderRadius: t.radius.sm };
   }
-  // default: kuyruklu klasik balon
   return {
     borderRadius: t.radius.lg,
     ...(isMe ? { borderBottomRightRadius: 4 } : { borderBottomLeftRadius: 4 }),
   };
 }
 
+type Props = {
+  item: Message;
+  isMe: boolean;
+  onReply: (message: Message) => void;
+  onImagePress: (imageUrl: string) => void;
+  onLongPress?: (message: Message) => void;
+  onPress?: (message: Message) => void;
+  selected?: boolean;
+  selectionMode?: boolean;
+  searchQuery?: string;
+};
+
 const SwipeableMessageComponent = ({
   item,
   isMe,
   onReply,
-  onDelete,
-  onForward,
   onImagePress,
+  onLongPress,
+  onPress,
+  selected = false,
+  selectionMode = false,
   searchQuery = '',
-}: {
-  item: Message;
-  isMe: boolean;
-  onReply: (message: Message) => void;
-  onDelete: (message: Message) => void;
-  onForward?: (message: Message) => void;
-  onImagePress: (imageUrl: string) => void;
-  searchQuery?: string;
-}) => {
+}: Props) => {
   const theme = useTheme();
+  const { toast } = useFeedback();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const dragX = useRef(new Animated.Value(0)).current;
+  const dragOffsetRef = useRef(0);
+  const repliedRef = useRef(false);
   const [audioPlaying, setAudioPlaying] = useState(false);
-  const [audioPlayer, setAudioPlayer] = useState<AudioModule.AudioPlayer | null>(null);
+  const [audioPlayer, setAudioPlayer] = useState<AudioPlayer | null>(null);
 
-  // Balon uzerindeki metin rengi (gonderen vs alan)
   const bubbleTextColor = isMe ? theme.colors.myMessageText : theme.colors.theirMessageText;
   const shape = bubbleShape(theme, isMe);
 
-  // Ses oynaticiyi bilesen kaldirilirken (veya oynatici degisince) serbest birak
   useEffect(() => {
     return () => {
       if (audioPlayer) {
         try {
-          audioPlayer.remove();
+          audioPlayer.pause();
+          audioPlayer.release();
         } catch {
-          // yok say
+          /* ignore */
         }
       }
     };
   }, [audioPlayer]);
 
-  // Render text with highlighted search matches
   const renderHighlightedText = (text: string) => {
     const baseTextStyle = [styles.messageText, { color: bubbleTextColor }];
     if (!searchQuery.trim()) {
@@ -119,55 +139,88 @@ const SwipeableMessageComponent = ({
         }
         return;
       }
-
       if (!item.audioUrl) return;
-
-      const player = AudioModule.AudioModule.createPlayer(item.audioUrl);
+      const player = createAudioPlayer(item.audioUrl);
       setAudioPlayer(player);
       setAudioPlaying(true);
-
-      player.addListener('playbackStatusUpdate', (status: any) => {
+      player.addListener('playbackStatusUpdate', (status) => {
         if (status.didJustFinish) {
           setAudioPlaying(false);
+          try {
+            player.release();
+          } catch {
+            /* ignore */
+          }
           setAudioPlayer(null);
         }
       });
-
       player.play();
     } catch (error) {
       console.error('Playback error:', error);
-      Alert.alert('Error', 'Failed to play audio.');
+      toast.error('Ses oynatılamadı.');
     }
   };
 
-  const renderRightActions = () => (
-    <View style={styles.actionContainer}>
-      <TouchableOpacity
-        style={styles.actionButton}
-        onPress={() => onReply(item)}
-      >
-        <Text style={styles.actionText}>Reply</Text>
-      </TouchableOpacity>
-      {onForward && (
-        <TouchableOpacity
-          style={[styles.actionButton, styles.forwardButton]}
-          onPress={() => onForward(item)}
-        >
-          <Text style={styles.actionText}>Forward</Text>
-        </TouchableOpacity>
-      )}
-      {isMe && (
-        <TouchableOpacity
-          style={[styles.actionButton, styles.deleteButton]}
-          onPress={() => onDelete(item)}
-        >
-          <Text style={styles.actionText}>Delete</Text>
-        </TouchableOpacity>
-      )}
-    </View>
+  /** Kaydirma sirasinda ikon; birakinca 0'a animasyon → ikon aninda solar */
+  const onGestureEvent = useCallback(
+    (event: PanGestureHandlerGestureEvent) => {
+      const x = Math.max(0, Math.min(REPLY_TRAVEL, event.nativeEvent.translationX));
+      dragOffsetRef.current = x;
+      dragX.setValue(x);
+    },
+    [dragX]
   );
 
-  // If message is deleted, show minimal content
+  const snapBack = useCallback(() => {
+    Animated.timing(dragX, {
+      toValue: 0,
+      duration: 120,
+      useNativeDriver: true,
+    }).start(() => {
+      dragOffsetRef.current = 0;
+      repliedRef.current = false;
+    });
+  }, [dragX]);
+
+  const onHandlerStateChange = useCallback(
+    (event: PanGestureHandlerStateChangeEvent) => {
+      const { state, translationX, velocityX } = event.nativeEvent;
+      if (state !== State.END && state !== State.CANCELLED && state !== State.FAILED) {
+        return;
+      }
+
+      const traveled = Math.max(translationX, dragOffsetRef.current);
+      const shouldReply = traveled >= REPLY_THRESHOLD || velocityX > 600;
+
+      if (shouldReply && !repliedRef.current) {
+        repliedRef.current = true;
+        onReply(item);
+      }
+
+      // Birakir birakmaz geri — ikon kaybolur (Swipeable open/close yok)
+      snapBack();
+    },
+    [item, onReply, snapBack]
+  );
+
+  const rowTranslateX = dragX.interpolate({
+    inputRange: [0, REPLY_TRAVEL],
+    outputRange: [0, REPLY_TRAVEL],
+    extrapolate: 'clamp',
+  });
+
+  const iconOpacity = dragX.interpolate({
+    inputRange: [0, 12, REPLY_THRESHOLD],
+    outputRange: [0, 0.5, 1],
+    extrapolate: 'clamp',
+  });
+
+  const iconScale = dragX.interpolate({
+    inputRange: [0, REPLY_THRESHOLD, REPLY_TRAVEL],
+    outputRange: [0.5, 1, 1],
+    extrapolate: 'clamp',
+  });
+
   if (item.isDeleted) {
     return (
       <View
@@ -194,21 +247,22 @@ const SwipeableMessageComponent = ({
     switch (item.type) {
       case 'image':
         return (
-          <TouchableOpacity onPress={() => onImagePress(item.imageUrl!)}>
-            <Image
-              source={{ uri: item.imageUrl }}
-              style={styles.imageMessage}
-            />
+          <TouchableOpacity
+            onPress={() => {
+              if (selectionMode) onPress?.(item);
+              else onImagePress(item.imageUrl!);
+            }}
+            onLongPress={() => onLongPress?.(item)}
+            delayLongPress={350}
+          >
+            <Image source={{ uri: item.imageUrl }} style={styles.imageMessage} />
           </TouchableOpacity>
         );
 
       case 'audio':
         return (
           <View style={styles.audioContainer}>
-            <TouchableOpacity
-              style={styles.playButton}
-              onPress={playAudio}
-            >
+            <TouchableOpacity style={styles.playButton} onPress={playAudio}>
               {audioPlaying ? (
                 <Pause size={20} color={bubbleTextColor} fill={bubbleTextColor} />
               ) : (
@@ -224,10 +278,7 @@ const SwipeableMessageComponent = ({
           <View style={styles.fileContainer}>
             <Download size={24} color={bubbleTextColor} />
             <View style={{ flex: 1 }}>
-              <Text
-                style={[styles.fileName, { color: bubbleTextColor }]}
-                numberOfLines={1}
-              >
+              <Text style={[styles.fileName, { color: bubbleTextColor }]} numberOfLines={1}>
                 {item.fileName || 'Dosya'}
               </Text>
               <Text style={[styles.fileSize, { color: bubbleTextColor, opacity: 0.7 }]}>Dosya</Text>
@@ -235,90 +286,89 @@ const SwipeableMessageComponent = ({
           </View>
         );
 
+      case 'video':
+        return <VideoMessageBubble url={item.videoUrl} styles={styles} />;
+
       case 'text':
       default:
-        return renderHighlightedText(item.text ?? 'No content');
+        return (
+          <View>
+            {renderHighlightedText(item.text ?? 'No content')}
+            {item.editedAt ? (
+              <Text style={[styles.editedLabel, { color: bubbleTextColor, opacity: 0.65 }]}>
+                düzenlendi
+              </Text>
+            ) : null}
+          </View>
+        );
     }
   };
 
+  const reactionEntries = Object.entries(item.reactions ?? {});
+
   const footerColor = isMe ? theme.colors.myMessageText : theme.colors.textSecondary;
 
-  return (
-    <Swipeable renderRightActions={renderRightActions}>
-      <View
-        style={{
+  const bubble = (
+    <Pressable
+      onLongPress={() => onLongPress?.(item)}
+      onPress={() => {
+        if (selectionMode) onPress?.(item);
+      }}
+      delayLongPress={350}
+      style={[
+        styles.row,
+        {
           alignItems: isMe ? 'flex-end' : 'flex-start',
-          marginBottom: 8,
-          paddingHorizontal: 8,
-        }}
-      >
-        {/* Reply Quote */}
-        {item.replyTo && (
-          <View style={styles.quotedMessage}>
-            <View style={styles.quoteBar} />
-            <View>
-              <Text style={styles.quoteAuthor}>
-                {item.replyTo.senderId === item.senderId ? 'Sen' : 'Karşı taraf'}
-              </Text>
-              <Text
-                style={styles.quoteText}
-                numberOfLines={1}
-              >
-                {item.replyTo.type === 'text'
-                  ? (item.replyTo.text ?? '')
-                  : `[${(item.replyTo.type ?? 'file').toUpperCase()}]`}
-              </Text>
-            </View>
+          backgroundColor: selected ? `${theme.colors.primary}33` : 'transparent',
+        },
+      ]}
+    >
+      {item.replyTo && (
+        <View style={styles.quotedMessage}>
+          <View style={styles.quoteBar} />
+          <View>
+            <Text style={styles.quoteAuthor}>
+              {item.replyTo.senderId === item.senderId ? 'Sen' : 'Karşı taraf'}
+            </Text>
+            <Text style={styles.quoteText} numberOfLines={1}>
+              {item.replyTo.type === 'text'
+                ? (item.replyTo.text ?? '')
+                : `[${(item.replyTo.type ?? 'file').toUpperCase()}]`}
+            </Text>
           </View>
-        )}
-
-        {/* Main Message */}
-        <View
-          style={[
-            styles.messageBubble,
-            shape,
-            isMe ? styles.myMessageBubble : styles.theirMessageBubble,
-            item.type !== 'text' && {
-              padding: 0,
-              overflow: 'hidden',
-              backgroundColor:
-                item.type === 'image'
-                  ? 'transparent'
-                  : isMe
-                    ? theme.colors.myMessageBubble
-                    : theme.colors.theirMessageBubble,
-            },
-          ]}
-        >
-          {renderContent()}
-          {item.type !== 'image' && (
-            <View style={styles.messageFooter}>
-              <Text style={[styles.timeText, { color: footerColor, opacity: 0.8 }]}>
-                {formatTime(item.createdAt)}
-              </Text>
-              {isMe && (
-                <View style={{ marginLeft: 4 }}>
-                  {item.status === 'read' ? (
-                    <CheckCheck size={14} color={theme.colors.myMessageText} />
-                  ) : (
-                    <Check size={14} color={theme.colors.myMessageText} />
-                  )}
-                </View>
-              )}
-            </View>
-          )}
         </View>
+      )}
 
-        {/* Image Footer */}
-        {item.type === 'image' && (
-          <View style={styles.imageFooter}>
-            <Text style={styles.timeText}>
+      <View
+        style={[
+          styles.messageBubble,
+          shape,
+          isMe ? styles.myMessageBubble : styles.theirMessageBubble,
+          selected && styles.selectedBubble,
+          item.type !== 'text' && {
+            padding: 0,
+            overflow: 'hidden',
+            backgroundColor:
+              item.type === 'image'
+                ? 'transparent'
+                : isMe
+                  ? theme.colors.myMessageBubble
+                  : theme.colors.theirMessageBubble,
+          },
+        ]}
+      >
+        {renderContent()}
+        {item.type !== 'image' && item.type !== 'video' && (
+          <View style={styles.messageFooter}>
+            <Text style={[styles.timeText, { color: footerColor, opacity: 0.8 }]}>
               {formatTime(item.createdAt)}
             </Text>
             {isMe && (
               <View style={{ marginLeft: 4 }}>
                 {item.status === 'read' ? (
                   <CheckCheck size={14} color={theme.colors.read} />
+                ) : item.status === 'delivered' ? (
+                  <CheckCheck size={14} color={theme.colors.textSecondary} />
                 ) : (
                   <Check size={14} color={theme.colors.textSecondary} />
                 )}
@@ -327,38 +377,142 @@ const SwipeableMessageComponent = ({
           </View>
         )}
       </View>
-    </Swipeable>
+
+      {(item.type === 'image' || item.type === 'video') && (
+        <View style={styles.imageFooter}>
+          <Text style={styles.timeText}>{formatTime(item.createdAt)}</Text>
+          {isMe && (
+            <View style={{ marginLeft: 4 }}>
+              {item.status === 'read' ? (
+                <CheckCheck size={14} color={theme.colors.read} />
+              ) : item.status === 'delivered' ? (
+                <CheckCheck size={14} color={theme.colors.textSecondary} />
+              ) : (
+                <Check size={14} color={theme.colors.textSecondary} />
+              )}
+            </View>
+          )}
+        </View>
+      )}
+
+      {reactionEntries.length > 0 ? (
+        <View style={[styles.reactionsRow, isMe ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' }]}>
+          {reactionEntries.map(([uid, emoji]) => (
+            <View key={uid} style={styles.reactionChip}>
+              <Text style={styles.reactionEmoji}>{emoji}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </Pressable>
+  );
+
+  if (selectionMode) {
+    return bubble;
+  }
+
+  return (
+    <View style={styles.swipeContainer}>
+      {/* Ikon sadece dragX > 0 iken gorunur; snapBack ile hemen solar */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.replyIconSlot,
+          { opacity: iconOpacity, transform: [{ scale: iconScale }] },
+        ]}
+      >
+        <View style={styles.replyIconCircle}>
+          <Reply size={18} color={theme.colors.onAccent} />
+        </View>
+      </Animated.View>
+
+      <PanGestureHandler
+        onGestureEvent={onGestureEvent}
+        onHandlerStateChange={onHandlerStateChange}
+        activeOffsetX={12}
+        failOffsetY={[-16, 16]}
+      >
+        <Animated.View style={{ transform: [{ translateX: rowTranslateX }] }}>
+          {bubble}
+        </Animated.View>
+      </PanGestureHandler>
+    </View>
   );
 };
 
-// React.memo: yalnizca prop'lari degisince yeniden render edilir.
+function VideoMessageBubble({
+  url,
+  styles,
+}: {
+  url?: string;
+  styles: ReturnType<typeof makeStyles>;
+}) {
+  const player = useVideoPlayer(url ?? null, (p) => {
+    p.loop = false;
+  });
+
+  if (!url) {
+    return (
+      <View style={[styles.fileContainer, { padding: 12 }]}>
+        <Film size={24} color="#888" />
+        <Text style={styles.fileName}>Video yok</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      <VideoView
+        player={player}
+        style={styles.videoMessage}
+        nativeControls
+        contentFit="cover"
+      />
+      <TouchableOpacity
+        style={styles.videoOpenLink}
+        onPress={() => Linking.openURL(url)}
+      >
+        <Text style={styles.videoOpenText}>Tarayıcıda aç</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export const SwipeableMessage = React.memo(SwipeableMessageComponent);
 
 const makeStyles = (t: Theme) =>
   StyleSheet.create({
-    actionContainer: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 8,
-      gap: 4,
-    },
-    actionButton: {
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      backgroundColor: t.colors.primary,
-      borderRadius: t.radius.md,
+    swipeContainer: {
+      width: '100%',
       justifyContent: 'center',
     },
-    forwardButton: {
-      backgroundColor: t.colors.accent,
+    replyIconSlot: {
+      position: 'absolute',
+      left: 14,
+      top: 0,
+      bottom: 8,
+      width: 34,
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 0,
     },
-    deleteButton: {
-      backgroundColor: t.colors.error,
+    row: {
+      width: '100%',
+      marginBottom: 8,
+      paddingHorizontal: 8,
+      borderRadius: 8,
     },
-    actionText: {
-      color: '#FFFFFF',
-      fontSize: 12 * t.fontScale,
-      fontWeight: '600',
+    replyIconCircle: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: t.colors.primary,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    selectedBubble: {
+      borderWidth: 2,
+      borderColor: t.colors.primary,
     },
     quotedMessage: {
       flexDirection: 'row',
@@ -465,4 +619,38 @@ const makeStyles = (t: Theme) =>
     fileSize: {
       fontSize: 12 * t.fontScale,
     },
+    editedLabel: {
+      fontSize: 11 * t.fontScale,
+      marginTop: 2,
+      fontStyle: 'italic',
+    },
+    videoMessage: {
+      width: 220,
+      height: 160,
+      borderRadius: t.radius.md,
+      backgroundColor: '#000',
+    },
+    videoOpenLink: { padding: 8, alignItems: 'center' },
+    videoOpenText: {
+      fontSize: 12 * t.fontScale,
+      color: t.colors.primary,
+      fontWeight: '600',
+    },
+    reactionsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 4,
+      marginTop: -4,
+      marginBottom: 4,
+      paddingHorizontal: 8,
+    },
+    reactionChip: {
+      backgroundColor: t.colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: t.radius.pill,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+    },
+    reactionEmoji: { fontSize: 14 },
   });
