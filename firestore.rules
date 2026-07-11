@@ -2,18 +2,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // chatId format: uid1_uid2 (siralanmis uid'ler)
     function isChatParticipant(chatId) {
       return request.auth != null && (request.auth.uid in chatId.split('_'));
     }
 
-    // Sohbetteki karsi tarafin uid'i
     function chatOtherUid(chatId) {
       let ids = chatId.split('_');
       return ids[0] == request.auth.uid ? ids[1] : ids[0];
     }
 
-    // Mesajlasma yalnizca arkadaslar arasinda
     function areFriends(chatId) {
       return request.auth != null
         && exists(/databases/$(database)/documents/users/$(request.auth.uid)/friends/$(chatOtherUid(chatId)));
@@ -30,7 +27,21 @@ service cloud.firestore {
       return isChatParticipant(chatId) && areFriends(chatId) && !isBlocked(chatId);
     }
 
-    // Kod -> uid eslemesi (yalnizca kodu bilen okur)
+    function isGroupMember(groupId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid));
+    }
+
+    // Query-dostu: memberIds alaninda uid (array-contains ile uyumlu)
+    function uidInGroupMemberIds(groupId) {
+      return request.auth != null
+        && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberIds;
+    }
+
+    function canAccessGroup(groupId) {
+      return isGroupMember(groupId) || uidInGroupMemberIds(groupId);
+    }
+
     match /friendCodes/{code} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
@@ -40,21 +51,17 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if request.auth != null;
-
       allow create: if request.auth != null && request.auth.uid == userId;
-
       allow delete: if request.auth != null && request.auth.uid == userId;
-
       allow update: if request.auth != null && request.auth.uid == userId
         && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['name', 'surname', 'avatar', 'about', 'online', 'lastSeen', 'pushToken', 'friendCode']);
+            .hasOnly(['name', 'surname', 'avatar', 'about', 'online', 'lastSeen', 'lastActive', 'pushToken', 'friendCode', 'privacy']);
 
       match /userChats/{chatPartnerId} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow write: if request.auth != null && (request.auth.uid == userId || request.auth.uid == chatPartnerId);
       }
 
-      // Gelen arkadaslik istekleri
       match /friendRequests/{fromUid} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow create: if request.auth != null
@@ -66,7 +73,6 @@ service cloud.firestore {
           && (request.auth.uid == userId || request.auth.uid == fromUid);
       }
 
-      // Gonderilen istekler (bekliyor gostergesi)
       match /sentRequests/{toUid} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow create: if request.auth != null
@@ -76,7 +82,6 @@ service cloud.firestore {
           && (request.auth.uid == userId || request.auth.uid == toUid);
       }
 
-      // Arkadas listesi
       match /friends/{friendUid} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow create, delete: if request.auth != null
@@ -84,9 +89,17 @@ service cloud.firestore {
         allow update: if false;
       }
 
-      // Engellenen kullanicilar
       match /blocks/{blockedUid} {
         allow read: if request.auth != null && request.auth.uid == userId;
+        allow create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /starredMessages/{messageId} {
+        allow read, create, update, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /mutedChats/{friendId} {
+        allow read: if request.auth != null;
         allow create, update, delete: if request.auth != null && request.auth.uid == userId;
       }
     }
@@ -101,15 +114,70 @@ service cloud.firestore {
           && request.resource.data.senderId == request.auth.uid;
 
         allow update: if canChat(chatId) && (
-          (resource.data.senderId != request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']))
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'deliveredAt', 'readAt'])
+          ||
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['reactions'])
+          ||
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['deletedFor'])
           ||
           (resource.data.senderId == request.auth.uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isDeleted']))
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['isDeleted', 'text']))
+          ||
+          (resource.data.senderId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['text', 'editedAt']))
         );
 
         allow delete: if false;
       }
+    }
+
+    match /groups/{groupId} {
+      // Liste sorgusu: memberIds array-contains ile ayni kosul sart
+      allow read: if request.auth != null
+        && request.auth.uid in resource.data.memberIds;
+      allow create: if request.auth != null
+        && request.auth.uid in request.resource.data.memberIds;
+      allow update: if canAccessGroup(groupId);
+      allow delete: if request.auth != null
+        && request.auth.uid in resource.data.memberIds
+        && resource.data.createdBy == request.auth.uid;
+
+      match /members/{memberId} {
+        allow read: if canAccessGroup(groupId);
+        allow write: if request.auth != null && (
+          request.auth.uid == memberId
+          || canAccessGroup(groupId)
+        );
+      }
+
+      match /messages/{messageId} {
+        allow read: if canAccessGroup(groupId);
+        allow create: if canAccessGroup(groupId)
+          && request.resource.data.senderId == request.auth.uid;
+        allow update: if canAccessGroup(groupId);
+        allow delete: if false;
+      }
+    }
+
+    match /calls/{callId} {
+      allow read: if request.auth != null && (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.calleeId);
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.callerId;
+      allow update: if request.auth != null && (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.calleeId);
+      allow delete: if false;
+    }
+
+    match /statuses/{statusId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null
+        && resource.data.uid == request.auth.uid;
     }
   }
 }
