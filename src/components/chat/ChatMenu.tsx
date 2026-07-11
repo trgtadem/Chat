@@ -1,24 +1,44 @@
 import React from 'react';
 import { Modal, Pressable, TouchableOpacity, View, Text, StyleSheet } from 'react-native';
-import { Ban, Star, Image as ImageIcon, UserRound } from 'lucide-react-native';
+import {
+  Ban,
+  Star,
+  Image as ImageIcon,
+  UserRound,
+  BellOff,
+  Bell,
+  Images,
+  Phone,
+  Video,
+} from 'lucide-react-native';
 import { useThemedStyles } from '../../hooks/useThemedStyles';
 import { Theme } from '../../theme';
 
 type ChatMenuProps = {
   visible: boolean;
+  muted: boolean;
   onClose: () => void;
   onViewProfile: () => void;
   onGoStarred: () => void;
   onGoWallpaper: () => void;
+  onSharedMedia: () => void;
+  onAudioCall: () => void;
+  onVideoCall: () => void;
+  onToggleMute: () => void;
   onBlockUser: () => void;
 };
 
 export function ChatMenu({
   visible,
+  muted,
   onClose,
   onViewProfile,
   onGoStarred,
   onGoWallpaper,
+  onSharedMedia,
+  onAudioCall,
+  onVideoCall,
+  onToggleMute,
   onBlockUser,
 }: ChatMenuProps) {
   const styles = useThemedStyles(makeStyles);
@@ -32,6 +52,18 @@ export function ChatMenu({
             <UserRound size={18} color={theme.colors.textPrimary} />
             <Text style={styles.menuItemText}>Profili Görüntüle</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={onAudioCall}>
+            <Phone size={18} color={theme.colors.textPrimary} />
+            <Text style={styles.menuItemText}>Sesli Ara</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={onVideoCall}>
+            <Video size={18} color={theme.colors.textPrimary} />
+            <Text style={styles.menuItemText}>Görüntülü Ara</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={onSharedMedia}>
+            <Images size={18} color={theme.colors.textPrimary} />
+            <Text style={styles.menuItemText}>Paylaşılan Medya</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.menuItem} onPress={onGoStarred}>
             <Star size={18} color={theme.colors.textPrimary} />
             <Text style={styles.menuItemText}>Yıldızlı Mesajlar</Text>
@@ -39,6 +71,14 @@ export function ChatMenu({
           <TouchableOpacity style={styles.menuItem} onPress={onGoWallpaper}>
             <ImageIcon size={18} color={theme.colors.textPrimary} />
             <Text style={styles.menuItemText}>Duvar Kağıdı</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={onToggleMute}>
+            {muted ? (
+              <Bell size={18} color={theme.colors.textPrimary} />
+            ) : (
+              <BellOff size={18} color={theme.colors.textPrimary} />
+            )}
+            <Text style={styles.menuItemText}>{muted ? 'Sesi Aç' : 'Sessize Al'}</Text>
           </TouchableOpacity>
           <View style={styles.menuDivider} />
           <TouchableOpacity style={styles.menuItem} onPress={onBlockUser}>

@@ -17,6 +17,7 @@ type ChatInputBarProps = {
   onSend: () => void;
   onPickImage: () => void;
   onPickFile: () => void;
+  onPickVideo?: () => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
   isUploading: boolean;
@@ -24,6 +25,7 @@ type ChatInputBarProps = {
   recordingDuration: number;
   isSending: boolean;
   disabled: boolean;
+  editing?: boolean;
 };
 
 export function ChatInputBar({
@@ -32,6 +34,7 @@ export function ChatInputBar({
   onSend,
   onPickImage,
   onPickFile,
+  onPickVideo,
   onStartRecording,
   onStopRecording,
   isUploading,
@@ -39,72 +42,81 @@ export function ChatInputBar({
   recordingDuration,
   isSending,
   disabled,
+  editing,
 }: ChatInputBarProps) {
   const styles = useThemedStyles(makeStyles);
   const theme = styles.theme;
 
   return (
-    <View style={styles.inputWrapper}>
-      <View style={styles.inputContainer}>
-        <TouchableOpacity
-          style={styles.attachButton}
-          onPress={onPickImage}
-          disabled={disabled || isUploading || isRecording}
-        >
-          {isUploading ? (
-            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-          ) : (
-            <Paperclip size={22} color={theme.colors.textSecondary} />
-          )}
-        </TouchableOpacity>
+    <View style={styles.outer}>
+      {editing ? <Text style={styles.editingHint}>Mesajı düzenliyorsun</Text> : null}
+      <View style={styles.inputWrapper}>
+        <View style={styles.inputContainer}>
+          <TouchableOpacity
+            style={styles.attachButton}
+            onPress={onPickImage}
+            onLongPress={onPickVideo}
+            delayLongPress={400}
+            disabled={disabled || isUploading || isRecording || !!editing}
+          >
+            {isUploading ? (
+              <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+            ) : (
+              <Paperclip size={22} color={theme.colors.textSecondary} />
+            )}
+          </TouchableOpacity>
 
-        <TextInput
-          style={styles.chatInput}
-          placeholder="Bir mesaj yaz..."
-          placeholderTextColor={theme.colors.textSecondary}
-          value={inputText}
-          onChangeText={onChangeText}
-          multiline
-          editable={!isRecording && !disabled}
-        />
+          <TextInput
+            style={styles.chatInput}
+            placeholder={editing ? 'Düzenlenen mesaj...' : 'Bir mesaj yaz...'}
+            placeholderTextColor={theme.colors.textSecondary}
+            value={inputText}
+            onChangeText={onChangeText}
+            multiline
+            editable={!isRecording && !disabled}
+          />
 
-        <TouchableOpacity
-          style={styles.attachButton}
-          onPress={onPickFile}
-          disabled={disabled || isUploading || isRecording}
-        >
-          <Plus size={22} color={theme.colors.textSecondary} />
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.attachButton}
+            onPress={onPickFile}
+            disabled={disabled || isUploading || isRecording || !!editing}
+          >
+            <Plus size={22} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+
+        {isRecording ? (
+          <>
+            <View style={styles.recordingIndicator}>
+              <View style={styles.recordingDot} />
+              <Text style={styles.recordingText}>{recordingDuration}s</Text>
+            </View>
+            <TouchableOpacity style={[styles.sendButton, styles.stopButton]} onPress={onStopRecording}>
+              <Text style={styles.stopLabel}>Stop</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={styles.recordButton}
+              onPress={onStartRecording}
+              disabled={disabled || !!editing}
+            >
+              <Mic size={22} color={theme.colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onSend}
+              style={[
+                styles.sendButton,
+                (isSending || !inputText.trim() || disabled) && { opacity: 0.5 },
+              ]}
+              disabled={isSending || !inputText.trim() || disabled}
+            >
+              <Send size={24} color={theme.colors.onAccent} />
+            </TouchableOpacity>
+          </>
+        )}
       </View>
-
-      {isRecording ? (
-        <>
-          <View style={styles.recordingIndicator}>
-            <View style={styles.recordingDot} />
-            <Text style={styles.recordingText}>{recordingDuration}s</Text>
-          </View>
-          <TouchableOpacity style={[styles.sendButton, styles.stopButton]} onPress={onStopRecording}>
-            <Text style={styles.stopLabel}>Stop</Text>
-          </TouchableOpacity>
-        </>
-      ) : (
-        <>
-          <TouchableOpacity
-            style={styles.recordButton}
-            onPress={onStartRecording}
-            disabled={disabled}
-          >
-            <Mic size={22} color={theme.colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={onSend}
-            style={[styles.sendButton, (isSending || !inputText.trim() || disabled) && { opacity: 0.5 }]}
-            disabled={isSending || !inputText.trim() || disabled}
-          >
-            <Send size={24} color={theme.colors.onAccent} />
-          </TouchableOpacity>
-        </>
-      )}
     </View>
   );
 }
@@ -112,14 +124,23 @@ export function ChatInputBar({
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     theme: { colors: theme.colors } as any,
+    outer: {
+      backgroundColor: theme.colors.surface,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+    },
+    editingHint: {
+      paddingHorizontal: 16,
+      paddingTop: 8,
+      fontSize: 12 * theme.fontScale,
+      color: theme.colors.primary,
+      fontWeight: '600',
+    },
     inputWrapper: {
       flexDirection: 'row',
       alignItems: 'flex-end',
       paddingHorizontal: 12,
       paddingVertical: 8,
-      backgroundColor: theme.colors.surface,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: theme.colors.border,
       gap: 8,
     },
     inputContainer: {
