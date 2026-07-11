@@ -79,6 +79,9 @@ export async function sendFriendRequest(me: User, code: string): Promise<SendReq
     const incomingSnap = await getDoc(doc(db, 'users', me.id, 'friendRequests', toUid));
     if (incomingSnap.exists()) return { ok: false, reason: 'incoming_pending' };
 
+    const targetSnap = await getDoc(doc(db, 'users', toUid));
+    const target = targetSnap.data() as User | undefined;
+
     const requestData: FriendRequest = {
       fromUid: me.id,
       toUid,
@@ -98,6 +101,11 @@ export async function sendFriendRequest(me: User, code: string): Promise<SendReq
       toUid,
       status: 'pending',
       createdAt: serverTimestamp(),
+      toUser: {
+        name: target?.name ?? '',
+        surname: target?.surname ?? '',
+        avatar: target?.avatar ?? '',
+      },
     });
     await batch.commit();
 
@@ -154,6 +162,12 @@ export async function cancelRequest(meUid: string, toUid: string): Promise<void>
   await batch.commit();
 }
 
+/** Arkadasligi karsilikli kaldirir. */
+export async function removeFriend(meUid: string, friendUid: string): Promise<void> {
+  const { removeFriend: rm } = await import('./account');
+  return rm(meUid, friendUid);
+}
+
 /** Arkadas listesine abone olur. */
 export function subscribeFriends(uid: string, cb: (friends: Friend[]) => void): () => void {
   const ref = collection(db, 'users', uid, 'friends');
@@ -177,5 +191,32 @@ export function subscribeIncomingRequests(
     ref,
     (snap) => cb(snap.docs.map((d) => d.data() as FriendRequest)),
     (error) => console.error('subscribeIncomingRequests error:', error?.message || error)
+  );
+}
+
+/** Gonderilen bekleyen isteklere abone olur. */
+export function subscribeSentRequests(
+  uid: string,
+  cb: (requests: FriendRequest[]) => void
+): () => void {
+  const ref = collection(db, 'users', uid, 'sentRequests');
+  return onSnapshot(
+    ref,
+    (snap) =>
+      cb(
+        snap.docs.map((d) => {
+          const data = d.data();
+          const toUser = data.toUser ?? { name: '', surname: '', avatar: '' };
+          return {
+            fromUid: uid,
+            toUid: d.id,
+            fromUser: toUser,
+            toUser,
+            status: data.status ?? 'pending',
+            createdAt: data.createdAt,
+          } as FriendRequest & { toUser?: typeof toUser };
+        })
+      ),
+    (error) => console.error('subscribeSentRequests error:', error?.message || error)
   );
 }

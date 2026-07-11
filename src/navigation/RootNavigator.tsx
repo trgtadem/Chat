@@ -5,6 +5,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { useAppContext, useTheme } from '../context/AppContext';
 import { RootStackParamList } from '../types/navigation';
+import { navigationRef } from './navigationRef';
+import { useNotificationNavigation } from '../hooks/useNotificationNavigation';
 
 import { AuthScreen } from '../screens/AuthScreen';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -13,6 +15,7 @@ import { ProfileScreen } from '../screens/ProfileScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { EditProfileScreen } from '../screens/EditProfileScreen';
 import { AddFriendScreen } from '../screens/AddFriendScreen';
+import { ScanFriendQRScreen } from '../screens/ScanFriendQRScreen';
 import { ThemesScreen } from '../screens/ThemesScreen';
 import { SecurityScreen } from '../screens/SecurityScreen';
 import { PrivacyScreen } from '../screens/PrivacyScreen';
@@ -20,6 +23,12 @@ import { BlockedUsersScreen } from '../screens/BlockedUsersScreen';
 import { AboutScreen } from '../screens/AboutScreen';
 import { StarredMessagesScreen } from '../screens/StarredMessagesScreen';
 import { ChatWallpaperScreen } from '../screens/ChatWallpaperScreen';
+import { SharedMediaScreen } from '../screens/SharedMediaScreen';
+import { CreateGroupScreen } from '../screens/CreateGroupScreen';
+import { GroupChatScreen } from '../screens/GroupChatScreen';
+import { CallScreen } from '../screens/CallScreen';
+import { StatusComposeScreen } from '../screens/StatusComposeScreen';
+import { StatusViewerScreen } from '../screens/StatusViewerScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -30,6 +39,8 @@ type RootNavigatorProps = {
 export function RootNavigator({ loading }: RootNavigatorProps) {
   const { currentUser } = useAppContext();
   const theme = useTheme();
+
+  useNotificationNavigation(Boolean(currentUser) && !loading);
 
   if (loading) {
     return (
@@ -50,6 +61,7 @@ export function RootNavigator({ loading }: RootNavigatorProps) {
 
   return (
     <NavigationContainer
+      ref={navigationRef}
       theme={{
         ...navBase,
         colors: {
@@ -76,6 +88,7 @@ export function RootNavigator({ loading }: RootNavigatorProps) {
             <Stack.Screen name="Settings" component={SettingsScreen} />
             <Stack.Screen name="EditProfile" component={EditProfileScreen} />
             <Stack.Screen name="AddFriend" component={AddFriendScreen} />
+            <Stack.Screen name="ScanFriendQR" component={ScanFriendQRScreen} />
             <Stack.Screen name="Themes" component={ThemesScreen} />
             <Stack.Screen name="Security" component={SecurityScreen} />
             <Stack.Screen name="Privacy" component={PrivacyScreen} />
@@ -83,6 +96,12 @@ export function RootNavigator({ loading }: RootNavigatorProps) {
             <Stack.Screen name="About" component={AboutScreen} />
             <Stack.Screen name="StarredMessages" component={StarredMessagesScreen} />
             <Stack.Screen name="ChatWallpaper" component={ChatWallpaperScreen} />
+            <Stack.Screen name="SharedMedia" component={SharedMediaScreen} />
+            <Stack.Screen name="CreateGroup" component={CreateGroupScreen} />
+            <Stack.Screen name="GroupChat" component={GroupChatScreen} />
+            <Stack.Screen name="Call" component={CallScreen} />
+            <Stack.Screen name="StatusCompose" component={StatusComposeScreen} />
+            <Stack.Screen name="StatusViewer" component={StatusViewerScreen} />
           </>
         ) : (
           <Stack.Screen name="Auth" component={AuthScreen} />

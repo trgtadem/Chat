@@ -7,15 +7,23 @@ import {
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
-  Alert,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search } from 'lucide-react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as AudioModule from 'expo-audio';
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from 'expo-audio';
 import ImageViewing from 'react-native-image-viewing';
+
+import * as Clipboard from 'expo-clipboard';
 
 import { User, Message } from '../types';
 import { getChatId } from '../utils';
@@ -28,14 +36,26 @@ import { useAppContext, useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
 import { RootStackParamList } from '../types/navigation';
 import { useChatMessages } from '../hooks/useChatMessages';
+import { useUserPresence } from '../hooks/useUserPresence';
 import { uploadToCloudinary, deleteFromCloudinary } from '../services/media';
 import {
   sendTextMessage,
   sendMediaMessage as sendMediaMessageSvc,
   forwardMessage as forwardMessageSvc,
-  deleteMessage,
 } from '../services/messaging';
+import {
+  setMessageReaction,
+  editMessageText,
+  deleteMessageForMe,
+  deleteMessageForEveryone,
+} from '../services/messageActions';
+import { getDraft, setDraft } from '../services/chatList';
 import { setTypingStatus, subscribeTyping } from '../services/typing';
+import { subscribeStarredIds, toggleStarMessage } from '../services/starred';
+import { isChatMuted, muteChat, unmuteChat } from '../services/mutedChats';
+import { useFeedback } from '../feedback/FeedbackContext';
+import { ReactionPicker } from '../components/chat/ReactionPicker';
+import { MessageInfoModal } from '../components/chat/MessageInfoModal';
 
 type ChatScreenProps = NativeStackScreenProps<RootStackParamList, 'Chat'>;
 
@@ -47,16 +67,35 @@ export function ChatScreen({
   navigation: ChatScreenProps['navigation'];
 }) {
   const { currentUser, blockUser, isUserBlocked, getChatSettings, themeSettings, isFriend } = useAppContext();
+  const { toast, confirm } = useFeedback();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const { friend, forwardingMessage: routeForwardingMessage } = route.params;
+  const {
+    friend: routeFriend,
+    forwardingMessage: routeForwardingMessage,
+    focusMessageId,
+  } = route.params;
   const me = currentUser;
+  const { user: liveFriend } = useUserPresence(routeFriend?.id);
+  const friend = useMemo(() => {
+    if (!routeFriend) return routeFriend;
+    if (!liveFriend) return routeFriend;
+    return {
+      ...routeFriend,
+      ...liveFriend,
+      id: routeFriend.id,
+      name: liveFriend.name || routeFriend.name,
+      surname: liveFriend.surname || routeFriend.surname,
+      avatar: liveFriend.avatar || routeFriend.avatar,
+      online: liveFriend.online,
+      lastSeen: liveFriend.lastSeen,
+    };
+  }, [routeFriend, liveFriend]);
   const [inputText, setInputText] = useState('');
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [isTyping, setIsTyping] = useState(false);
   const [friendIsTyping, setFriendIsTyping] = useState(false);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState('');
@@ -64,15 +103,26 @@ export function ChatScreen({
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [menuVisible, setMenuVisible] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
+  const [chatMuted, setChatMuted] = useState(false);
+  const [reactionTarget, setReactionTarget] = useState<Message | null>(null);
+  const [infoMessage, setInfoMessage] = useState<Message | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const forwardDoneRef = useRef<string | null>(null);
+  const focusDoneRef = useRef<string | null>(null);
+  const draftTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const flatListRef = useRef<FlatList>(null);
   // Otomatik kaydirma kontrolu: ilk acilista en alta in; kullanici yukari
   // kaydirmadiysa yeni mesajda alta in; eski mesaj yuklerken alta zıplama.
   const initialScrollDoneRef = useRef(false);
   const isNearBottomRef = useRef(true);
-  const recorderRef = useRef<AudioModule.AudioRecorder | null>(null);
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const isRecordingSessionRef = useRef(false);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTypingWriteRef = useRef(0);
+  const isTypingRef = useRef(false);
   const recordIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordAutoStopRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -97,20 +147,118 @@ export function ChatScreen({
     );
   }, [messages, searchQuery]);
 
+  const selectionMode = selectedIds.size > 0;
+
+  const selectedMessages = useMemo(
+    () => messages.filter((m) => selectedIds.has(m.id)),
+    [messages, selectedIds]
+  );
+
+  useEffect(() => {
+    if (!me?.id || !friend?.id) {
+      setStarredIds(new Set());
+      return;
+    }
+    return subscribeStarredIds(me.id, friend.id, setStarredIds);
+  }, [me?.id, friend?.id]);
+
+  useEffect(() => {
+    if (!me?.id || !friend?.id) {
+      setChatMuted(false);
+      return;
+    }
+    isChatMuted(me.id, friend.id)
+      .then(setChatMuted)
+      .catch(() => setChatMuted(false));
+  }, [me?.id, friend?.id]);
+
+  // Taslak yukle
+  useEffect(() => {
+    if (!chatId) return;
+    let cancelled = false;
+    getDraft(chatId).then((d) => {
+      if (!cancelled && d) setInputText(d);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatId]);
+
+  // Taslak kaydet (debounce)
+  useEffect(() => {
+    if (!chatId || editingMessage) return;
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      void setDraft(chatId, inputText);
+    }, 400);
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    };
+  }, [inputText, chatId, editingMessage]);
+
+  // Yildizli mesaj / arama: hedef mesaja kaydir
+  useEffect(() => {
+    if (!focusMessageId || !messages.length) return;
+    if (focusDoneRef.current === focusMessageId) return;
+    const index = messages.findIndex((m) => m.id === focusMessageId);
+    if (index < 0) return;
+    focusDoneRef.current = focusMessageId;
+    requestAnimationFrame(() => {
+      try {
+        flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.4 });
+      } catch {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }
+    });
+    navigation.setParams({ focusMessageId: undefined });
+  }, [focusMessageId, messages, navigation]);
+
+  // Arama: filtreleme yok, ilk eslesmeye kaydir (vurgulama SwipeableMessage'da)
+  useEffect(() => {
+    if (!isSearching || !searchQuery.trim()) return;
+    const q = searchQuery.toLowerCase();
+    const index = messages.findIndex(
+      (msg) => msg.type === 'text' && msg.text && msg.text.toLowerCase().includes(q)
+    );
+    if (index < 0) return;
+    try {
+      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.3 });
+    } catch {
+      /* ignore */
+    }
+  }, [searchQuery, isSearching, messages]);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const toggleSelect = useCallback((message: Message) => {
+    if (message.isDeleted) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(message.id)) next.delete(message.id);
+      else next.add(message.id);
+      return next;
+    });
+  }, []);
+
+  const handleReplyFromSwipe = useCallback((message: Message) => {
+    setReplyingTo(message);
+    setSelectedIds(new Set());
+  }, []);
+
   const handleForwardToCurrentChat = useCallback(
     async (message: Message) => {
       if (!me || !friend?.id) return;
       try {
         const label =
-          message.senderId === me.id ? 'You' : (friend?.name ?? 'Unknown');
+          message.senderId === me.id ? 'Sen' : (friend?.name ?? 'Bilinmeyen');
         await forwardMessageSvc(chatId, me, friend, message, label);
-        Alert.alert('Success', 'Message forwarded successfully.');
+        toast.success('Mesaj iletildi.');
       } catch (error) {
         console.error('Forward error:', error);
-        Alert.alert('Error', 'Failed to forward message.');
+        toast.error('Mesaj iletilemedi.');
       }
     },
-    [chatId, me, friend]
+    [chatId, me, friend, toast]
   );
 
   useEffect(() => {
@@ -162,45 +310,150 @@ export function ChatScreen({
     return subscribeTyping(chatId, friend.id, setFriendIsTyping);
   }, [chatId, friend?.id, canMessage, me?.id]);
 
-  // Ekrandan cikildiginda: typing durumunu sifirla ve tum zamanlayicilari temizle
+  const clearTyping = useCallback(() => {
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    isTypingRef.current = false;
+    if (chatId && me?.id) {
+      setTypingStatus(chatId, me.id, false).catch(() => {});
+    }
+  }, [chatId, me?.id]);
+
+  const clearTypingRemoteOnly = useCallback(() => {
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    isTypingRef.current = false;
+    if (chatId && me?.id) {
+      setTypingStatus(chatId, me.id, false).catch(() => {});
+    }
+  }, [chatId, me?.id]);
+
+  /** Kaydi iptal et — gonderme (arka plan / unmount) */
+  const discardRecording = useCallback(async () => {
+    if (recordIntervalRef.current) {
+      clearInterval(recordIntervalRef.current);
+      recordIntervalRef.current = null;
+    }
+    if (recordAutoStopRef.current) {
+      clearTimeout(recordAutoStopRef.current);
+      recordAutoStopRef.current = null;
+    }
+    const wasRecording = isRecordingSessionRef.current || audioRecorder.isRecording;
+    isRecordingSessionRef.current = false;
+    setIsRecording(false);
+    setRecordingDuration(0);
+    if (!wasRecording) return;
+    try {
+      if (audioRecorder.isRecording) {
+        await audioRecorder.stop();
+      }
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+    } catch (e) {
+      console.warn('discardRecording stop error:', e);
+    }
+  }, [audioRecorder]);
+
+  // AppState: arka plana inince typing + kayit temizle
   useEffect(() => {
+    const onChange = (state: AppStateStatus) => {
+      if (state === 'active') return;
+      clearTyping();
+      void discardRecording();
+    };
+    const sub = AppState.addEventListener('change', onChange);
+    return () => sub.remove();
+  }, [clearTyping, discardRecording]);
+
+  // Navigasyon blur (profil vb.): typing temizle
+  useEffect(() => {
+    const unsub = navigation.addListener('blur', () => {
+      clearTyping();
+    });
+    return unsub;
+  }, [navigation, clearTyping]);
+
+  // Unmount / beforeRemove: typing + kayit (setState yok — remote only)
+  useEffect(() => {
+    const unsub = navigation.addListener('beforeRemove', () => {
+      clearTypingRemoteOnly();
+      void discardRecording();
+    });
     return () => {
+      unsub();
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
       if (recordAutoStopRef.current) clearTimeout(recordAutoStopRef.current);
-      if (chatId && me?.id) {
-        setTypingStatus(chatId, me.id, false).catch(() => {});
-      }
+      clearTypingRemoteOnly();
+      void discardRecording();
     };
-  }, [chatId, me?.id]);
+  }, [navigation, clearTypingRemoteOnly, discardRecording]);
 
   const handlePickImage = async () => {
     try {
       const permissionResult =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
-        Alert.alert(
-          'Permission required',
-          'You need to grant camera roll permissions to send images.'
-        );
+        toast.info('Görsel göndermek için galeri izni vermelisin.', 'İzin gerekli');
         return;
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'images',
+        mediaTypes: ['images'],
         allowsEditing: false,
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets[0]) {
         setIsUploading(true);
-        const imageUrl = await uploadToCloudinary(result.assets[0].uri);
-        await sendMediaMessage('image', { imageUrl });
+        const uploaded = await uploadToCloudinary(result.assets[0].uri);
+        await sendMediaMessage('image', {
+          imageUrl: uploaded.url,
+          cloudinaryDeleteToken: uploaded.deleteToken ?? null,
+        });
         setIsUploading(false);
       }
     } catch (error) {
       console.error('Image picking error:', error);
-      Alert.alert('Error', 'Failed to upload image. Please try again.');
+      toast.error('Görsel yüklenemedi. Lütfen tekrar dene.');
+      setIsUploading(false);
+    }
+  };
+
+  const handlePickVideo = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        toast.info('Video göndermek için galeri izni vermelisin.', 'İzin gerekli');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: false,
+        quality: 0.8,
+        videoMaxDuration: 120,
+      });
+      if (!result.canceled && result.assets[0]) {
+        setIsUploading(true);
+        const asset = result.assets[0];
+        const uploaded = await uploadToCloudinary(
+          asset.uri,
+          `video_${Date.now()}.mp4`,
+          asset.mimeType || 'video/mp4',
+          'video'
+        );
+        await sendMediaMessage('video', {
+          videoUrl: uploaded.url,
+          cloudinaryDeleteToken: uploaded.deleteToken ?? null,
+        });
+        setIsUploading(false);
+      }
+    } catch (error) {
+      console.error('Video picking error:', error);
+      toast.error('Video yüklenemedi.');
       setIsUploading(false);
     }
   };
@@ -214,47 +467,44 @@ export function ChatScreen({
       if (result.assets && result.assets[0]) {
         setIsUploading(true);
         const asset = result.assets[0];
-        const fileUrl = await uploadToCloudinary(
+        const uploaded = await uploadToCloudinary(
           asset.uri,
           asset.name,
           asset.mimeType || 'application/octet-stream',
           'auto'
         );
         await sendMediaMessage('file', {
-          fileUrl,
+          fileUrl: uploaded.url,
           fileName: asset.name,
+          cloudinaryDeleteToken: uploaded.deleteToken ?? null,
         });
         setIsUploading(false);
       }
     } catch (error) {
       console.error('File picking error:', error);
-      Alert.alert('Error', 'Failed to upload file. Please try again.');
+      toast.error('Dosya yüklenemedi. Lütfen tekrar dene.');
       setIsUploading(false);
     }
   };
 
   const startRecording = async () => {
     try {
-      const permission = await AudioModule.requestRecordingPermissionsAsync();
+      if (isRecordingSessionRef.current || audioRecorder.isRecording) return;
+
+      const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
-          'Permission required',
-          'You need to grant microphone permissions to record audio.'
-        );
+        toast.info('Ses kaydı için mikrofon izni vermelisin.', 'İzin gerekli');
         return;
       }
 
-      await AudioModule.AudioModule.setAudioModeAsync({
+      await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
       });
 
-      const recorder = AudioModule.AudioModule.createRecorder(
-        AudioModule.RecordingPresets.HIGH_QUALITY
-      );
-
-      await recorder.record();
-      recorderRef.current = recorder;
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+      isRecordingSessionRef.current = true;
       setIsRecording(true);
       setRecordingDuration(0);
 
@@ -264,13 +514,15 @@ export function ChatScreen({
 
       // Auto stop after 60 seconds
       recordAutoStopRef.current = setTimeout(() => {
-        if (recorderRef.current && recorderRef.current.isRecording) {
+        if (isRecordingSessionRef.current) {
           stopRecording();
         }
       }, 60000);
     } catch (error) {
       console.error('Recording error:', error);
-      Alert.alert('Error', 'Failed to start recording.');
+      isRecordingSessionRef.current = false;
+      setIsRecording(false);
+      toast.error('Kayıt başlatılamadı.');
     }
   };
 
@@ -285,30 +537,42 @@ export function ChatScreen({
       recordAutoStopRef.current = null;
     }
 
-    if (!recorderRef.current) return;
+    if (!isRecordingSessionRef.current && !audioRecorder.isRecording) return;
 
     try {
+      isRecordingSessionRef.current = false;
       setIsRecording(false);
-      await recorderRef.current.stop();
-      const uri = recorderRef.current.uri;
-      recorderRef.current = null;
+      if (audioRecorder.isRecording) {
+        await audioRecorder.stop();
+      }
+      const uri = audioRecorder.uri;
       setRecordingDuration(0);
+
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      });
 
       if (uri) {
         setIsUploading(true);
-        const audioUrl = await uploadToCloudinary(
+        const uploaded = await uploadToCloudinary(
           uri,
           `audio_${Date.now()}.m4a`,
           'audio/m4a',
           'video'
         );
-        await sendMediaMessage('audio', { audioUrl });
+        await sendMediaMessage('audio', {
+          audioUrl: uploaded.url,
+          cloudinaryDeleteToken: uploaded.deleteToken ?? null,
+        });
         setIsUploading(false);
       }
     } catch (error) {
       console.error('Stop recording error:', error);
-      Alert.alert('Error', 'Failed to save audio.');
+      toast.error('Ses kaydı kaydedilemedi.');
       setIsUploading(false);
+      isRecordingSessionRef.current = false;
+      setIsRecording(false);
     }
   };
 
@@ -319,31 +583,43 @@ export function ChatScreen({
     }
     setInputText(text);
 
-    if (!isTyping) {
-      setIsTyping(true);
+    if (!text.trim()) {
+      clearTyping();
+      return;
+    }
+
+    const now = Date.now();
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      lastTypingWriteRef.current = now;
       setTypingStatus(chatId, me.id, true).catch(console.error);
+    } else if (now - lastTypingWriteRef.current > 2000) {
+      lastTypingWriteRef.current = now;
+      setTypingStatus(chatId, me.id, true).catch(() => {});
     }
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     typingTimeoutRef.current = setTimeout(() => {
-      setIsTyping(false);
+      isTypingRef.current = false;
       setTypingStatus(chatId, me.id, false).catch(console.error);
     }, 2000);
   };
 
   const sendMediaMessage = async (
-    type: 'image' | 'audio' | 'file',
+    type: 'image' | 'audio' | 'file' | 'video',
     payload: {
       imageUrl?: string | null;
       audioUrl?: string | null;
       fileUrl?: string | null;
+      videoUrl?: string | null;
       fileName?: string | null;
+      cloudinaryDeleteToken?: string | null;
     }
   ) => {
     if (!me || !friend?.id) return;
     if (isBlocked || !canMessage) {
-      Alert.alert('Mesaj gönderilemedi', 'Bu kişiyle mesajlaşmak için arkadaş olmalısınız.');
+      toast.warning('Bu kişiyle mesajlaşmak için arkadaş olmalısınız.', 'Mesaj gönderilemedi');
       return;
     }
     try {
@@ -351,34 +627,42 @@ export function ChatScreen({
       setReplyingTo(null);
     } catch (error) {
       console.error('Send message error:', error);
-      Alert.alert('Error', 'Failed to send message.');
+      toast.error('Mesaj gönderilemedi.');
     }
   };
 
   const handleSendMessage = async () => {
     if (!me || !friend?.id) return;
     if (isBlocked) {
-      Alert.alert('Engellendi', 'Bu kullanıcıyı engellediğin için mesaj gönderemezsin.');
+      toast.warning('Bu kullanıcıyı engellediğin için mesaj gönderemezsin.', 'Engellendi');
       return;
     }
     if (!canMessage) {
-      Alert.alert('Arkadaş değil', 'Bu kişiyle mesajlaşmak için önce arkadaş olmalısınız.');
+      toast.warning('Bu kişiyle mesajlaşmak için önce arkadaş olmalısınız.', 'Arkadaş değil');
       return;
     }
 
     if (!inputText.trim()) return;
 
+    clearTyping();
     setIsSending(true);
     const textToSend = inputText;
     setInputText('');
 
     try {
-      await sendTextMessage(chatId, me, friend, textToSend, replyingTo);
-      setReplyingTo(null);
+      if (editingMessage) {
+        await editMessageText(chatId, editingMessage.id, textToSend.trim());
+        setEditingMessage(null);
+        toast.success('Mesaj düzenlendi.');
+      } else {
+        await sendTextMessage(chatId, me, friend, textToSend, replyingTo);
+        setReplyingTo(null);
+        void setDraft(chatId, '');
+      }
     } catch (error: any) {
       console.error('Send message error:', error?.message || error?.code || error);
       setInputText(textToSend);
-      Alert.alert('Hata', 'Mesaj gonderilemedi. Lutfen tekrar deneyin.');
+      toast.error('Mesaj gönderilemedi. Lütfen tekrar deneyin.');
     } finally {
       setIsSending(false);
     }
@@ -386,71 +670,168 @@ export function ChatScreen({
 
   const handleForwardMessage = useCallback(
     (message: Message) => {
+      clearSelection();
       navigation.navigate('Home', { forwardingMessage: message });
     },
-    [navigation]
+    [navigation, clearSelection]
   );
 
   const handleDeleteMessage = useCallback(
-    (message: Message) => {
-      Alert.alert('Delete Message', 'Delete this message for everyone?', [
-        { text: 'Cancel', onPress: () => {} },
-        {
-          text: 'Delete',
-          onPress: async () => {
-            try {
-              if (message.imageUrl) await deleteFromCloudinary(message.imageUrl);
-              if (message.audioUrl) await deleteFromCloudinary(message.audioUrl);
-              if (message.fileUrl) await deleteFromCloudinary(message.fileUrl);
-              await deleteMessage(chatId, message.id);
-            } catch (error: any) {
-              console.error('Delete error:', error);
-              Alert.alert('Error', 'Failed to delete message: ' + (error.message || 'Unknown error'));
-            }
-          },
-        },
-      ]);
+    async (message: Message) => {
+      try {
+        if (message.senderId === me?.id) {
+          const everyone = await confirm({
+            title: 'Mesajı Sil',
+            message: 'Herkes için silmek ister misin? İptal edersen yalnızca senden silinir.',
+            confirmLabel: 'Herkes için sil',
+            cancelLabel: 'Benden sil',
+            destructive: true,
+          });
+          if (everyone) {
+            const token = message.cloudinaryDeleteToken;
+            if (message.imageUrl) await deleteFromCloudinary(message.imageUrl, token);
+            if (message.audioUrl) await deleteFromCloudinary(message.audioUrl, token);
+            if (message.fileUrl) await deleteFromCloudinary(message.fileUrl, token);
+            if (message.videoUrl) await deleteFromCloudinary(message.videoUrl, token);
+            await deleteMessageForEveryone(chatId, message.id);
+          } else if (me?.id) {
+            await deleteMessageForMe(chatId, message.id, me.id);
+          }
+        } else if (me?.id) {
+          const ok = await confirm({
+            title: 'Mesajı Sil',
+            message: 'Bu mesaj yalnızca senden silinecek.',
+            confirmLabel: 'Sil',
+            destructive: true,
+          });
+          if (!ok) return;
+          await deleteMessageForMe(chatId, message.id, me.id);
+        }
+        clearSelection();
+      } catch (error: any) {
+        console.error('Delete error:', error);
+        toast.error('Mesaj silinemedi: ' + (error.message || 'Bilinmeyen hata'));
+      }
     },
-    [chatId]
+    [chatId, clearSelection, confirm, toast, me?.id]
   );
+
+  const handleSelectionReply = useCallback(() => {
+    if (selectedMessages.length !== 1) return;
+    setReplyingTo(selectedMessages[0]);
+    clearSelection();
+  }, [selectedMessages, clearSelection]);
+
+  const handleSelectionStar = useCallback(async () => {
+    if (!me?.id || !friend?.id) return;
+    try {
+      await Promise.all(
+        selectedMessages.map((m) =>
+          toggleStarMessage(me.id, friend.id, m, starredIds.has(m.id))
+        )
+      );
+      clearSelection();
+    } catch (error) {
+      console.error('Star toggle error:', error);
+      toast.error('Yıldız işlemi başarısız.');
+    }
+  }, [me?.id, friend?.id, selectedMessages, starredIds, clearSelection]);
+
+  const handleSelectionCopy = useCallback(async () => {
+    const texts = selectedMessages
+      .filter((m) => m.type === 'text' && m.text)
+      .map((m) => m.text!);
+    if (!texts.length) {
+      toast.info('Kopyalanacak metin mesajı yok.', 'Kopyala');
+      return;
+    }
+    await Clipboard.setStringAsync(texts.join('\n'));
+    clearSelection();
+  }, [selectedMessages, clearSelection]);
+
+  const handleSelectionForward = useCallback(() => {
+    if (selectedMessages.length !== 1) return;
+    handleForwardMessage(selectedMessages[0]);
+  }, [selectedMessages, handleForwardMessage]);
+
+  const handleSelectionDelete = useCallback(async () => {
+    if (!selectedMessages.length) return;
+    if (selectedMessages.length === 1) {
+      await handleDeleteMessage(selectedMessages[0]);
+      return;
+    }
+    const ok = await confirm({
+      title: 'Mesajları Sil',
+      message: `${selectedMessages.length} mesajı senden silmek istiyor musun?`,
+      confirmLabel: 'Sil',
+      destructive: true,
+    });
+    if (!ok || !me?.id) return;
+    try {
+      await Promise.all(
+        selectedMessages.map((message) => deleteMessageForMe(chatId, message.id, me.id))
+      );
+      clearSelection();
+    } catch (error: any) {
+      toast.error('Mesajlar silinemedi.');
+    }
+  }, [selectedMessages, me?.id, handleDeleteMessage, chatId, clearSelection, confirm, toast]);
 
   const handleImagePress = useCallback((imageUrl: string) => {
     setSelectedImageUrl(imageUrl);
     setImageViewerVisible(true);
   }, []);
 
+  const openReactionPicker = useCallback((message: Message) => {
+    if (message.isDeleted) return;
+    if (selectionMode) {
+      toggleSelect(message);
+      return;
+    }
+    setReactionTarget(message);
+  }, [selectionMode, toggleSelect]);
+
   const renderMessage = useCallback(
     ({ item }: { item: Message }) => (
       <SwipeableMessage
         item={item}
         isMe={item.senderId === me!.id}
-        onReply={setReplyingTo}
-        onDelete={handleDeleteMessage}
-        onForward={handleForwardMessage}
+        onReply={handleReplyFromSwipe}
         onImagePress={handleImagePress}
+        onLongPress={openReactionPicker}
+        onPress={toggleSelect}
+        selected={selectedIds.has(item.id)}
+        selectionMode={selectionMode}
         searchQuery={searchQuery}
       />
     ),
-    [me?.id, handleDeleteMessage, handleForwardMessage, handleImagePress, searchQuery]
+    [
+      me?.id,
+      handleReplyFromSwipe,
+      handleImagePress,
+      openReactionPicker,
+      toggleSelect,
+      selectedIds,
+      selectionMode,
+      searchQuery,
+    ]
   );
 
   // 3 nokta menusu icin acilir liste (dropdown) kontrolu
   const closeMenu = () => setMenuVisible(false);
 
-  const handleBlockUser = () => {
+  const handleBlockUser = async () => {
     closeMenu();
-    Alert.alert('Kullanıcıyı Engelle', `${friend.name} kişisini engellemek istiyor musun?`, [
-      { text: 'Vazgeç', style: 'cancel' },
-      {
-        text: 'Engelle',
-        style: 'destructive',
-        onPress: () => {
-          blockUser(friend);
-          Alert.alert('Tamam', 'Kullanıcı engellendi.');
-          navigation.goBack();
-        },
-      },
-    ]);
+    const ok = await confirm({
+      title: 'Kullanıcıyı Engelle',
+      message: `${friend.name} kişisini engellemek istiyor musun?`,
+      confirmLabel: 'Engelle',
+      destructive: true,
+    });
+    if (!ok) return;
+    blockUser(friend);
+    toast.success('Kullanıcı engellendi.');
+    navigation.goBack();
   };
 
   const handleGoStarred = () => {
@@ -466,6 +847,40 @@ export function ChatScreen({
   const handleViewProfile = () => {
     closeMenu();
     navigation.navigate('Profile', { user: friend });
+  };
+
+  const handleSharedMedia = () => {
+    closeMenu();
+    navigation.navigate('SharedMedia', { friend, messages });
+  };
+
+  const handleAudioCall = () => {
+    closeMenu();
+    navigation.navigate('Call', { friend, isVideo: false });
+  };
+
+  const handleVideoCall = () => {
+    closeMenu();
+    navigation.navigate('Call', { friend, isVideo: true });
+  };
+
+  const handleToggleMute = async () => {
+    closeMenu();
+    if (!me?.id || !friend?.id) return;
+    try {
+      if (chatMuted) {
+        await unmuteChat(me.id, friend.id);
+        setChatMuted(false);
+        toast.success('Bu sohbet için bildirimler tekrar açık.', 'Sesi açıldı');
+      } else {
+        await muteChat(me.id, friend.id);
+        setChatMuted(true);
+        toast.success('Bu sohbet için bildirimler kapatıldı.', 'Sessize alındı');
+      }
+    } catch (error) {
+      console.error('Mute toggle error:', error);
+      toast.error('Sessize alma ayarı güncellenemedi.');
+    }
   };
 
   // Erken return'ler: tum hook'lar cagrildiktan SONRA (Rules of Hooks)
@@ -486,7 +901,7 @@ export function ChatScreen({
         <ChatHeader
           friend={friend}
           friendIsTyping={friendIsTyping}
-          isSearching={isSearching}
+          isSearching={isSearching && !selectionMode}
           searchQuery={searchQuery}
           searchResultCount={filteredMessages.length}
           onBack={() => navigation.goBack()}
@@ -498,6 +913,27 @@ export function ChatScreen({
           onSearchChange={setSearchQuery}
           onOpenMenu={() => setMenuVisible(true)}
           onOpenProfile={() => navigation.navigate('Profile', { user: friend })}
+          onCall={handleAudioCall}
+          selection={
+            selectionMode
+              ? {
+                  selectedCount: selectedIds.size,
+                  canReply: selectedMessages.length === 1,
+                  canCopy: selectedMessages.some((m) => m.type === 'text' && !!m.text),
+                  canForward: selectedMessages.length === 1,
+                  canDelete: selectedMessages.length > 0,
+                  isStarred:
+                    selectedMessages.length > 0 &&
+                    selectedMessages.every((m) => starredIds.has(m.id)),
+                  onClearSelection: clearSelection,
+                  onReply: handleSelectionReply,
+                  onStar: handleSelectionStar,
+                  onCopy: handleSelectionCopy,
+                  onForward: handleSelectionForward,
+                  onDelete: handleSelectionDelete,
+                }
+              : null
+          }
         />
 
         {/* Messages List (duvar kagidi arka planiyla) */}
@@ -511,7 +947,7 @@ export function ChatScreen({
           ) : (
             <FlatList
               ref={flatListRef}
-              data={filteredMessages}
+              data={messages}
               ListHeaderComponent={
                 hasMoreMessages && !isSearching ? (
                   <TouchableOpacity
@@ -528,6 +964,15 @@ export function ChatScreen({
               onScroll={handleScroll}
               scrollEventThrottle={16}
               onContentSizeChange={handleContentSizeChange}
+              onScrollToIndexFailed={(info) => {
+                setTimeout(() => {
+                  flatListRef.current?.scrollToIndex({
+                    index: info.index,
+                    animated: true,
+                    viewPosition: 0.4,
+                  });
+                }, 250);
+              }}
               initialNumToRender={15}
               maxToRenderPerBatch={12}
               windowSize={11}
@@ -540,7 +985,10 @@ export function ChatScreen({
         {replyingTo && (
           <View style={styles.replyPreview}>
             <View style={styles.replyContent}>
-              <Text style={styles.replyLabel}>Replying to {replyingTo.senderId === me.id ? 'yourself' : (friend?.name ?? 'Friend')}</Text>
+              <Text style={styles.replyLabel}>
+                Yanıtlanıyor:{' '}
+                {replyingTo.senderId === me.id ? 'kendin' : (friend?.name ?? 'Arkadaş')}
+              </Text>
               <Text style={styles.replyText} numberOfLines={1}>
                 {replyingTo.type === 'text'
                   ? (replyingTo.text ?? '')
@@ -571,6 +1019,7 @@ export function ChatScreen({
           onSend={handleSendMessage}
           onPickImage={handlePickImage}
           onPickFile={handlePickFile}
+          onPickVideo={handlePickVideo}
           onStartRecording={startRecording}
           onStopRecording={stopRecording}
           isUploading={isUploading}
@@ -578,16 +1027,67 @@ export function ChatScreen({
           recordingDuration={recordingDuration}
           isSending={isSending}
           disabled={isBlocked || !canMessage}
+          editing={!!editingMessage}
         />
       </KeyboardAvoidingView>
 
       <ChatMenu
         visible={menuVisible}
+        muted={chatMuted}
         onClose={closeMenu}
         onViewProfile={handleViewProfile}
         onGoStarred={handleGoStarred}
         onGoWallpaper={handleGoWallpaper}
+        onSharedMedia={handleSharedMedia}
+        onAudioCall={handleAudioCall}
+        onVideoCall={handleVideoCall}
+        onToggleMute={handleToggleMute}
         onBlockUser={handleBlockUser}
+      />
+
+      <ReactionPicker
+        visible={!!reactionTarget}
+        onClose={() => setReactionTarget(null)}
+        onSelect={async (emoji) => {
+          if (!reactionTarget || !me?.id) return;
+          try {
+            await setMessageReaction(chatId, reactionTarget.id, me.id, emoji);
+          } catch (e) {
+            toast.error('Tepki eklenemedi.');
+          }
+        }}
+        onClear={
+          reactionTarget?.reactions?.[me.id]
+            ? async () => {
+                try {
+                  await setMessageReaction(chatId, reactionTarget.id, me.id, null);
+                } catch {
+                  toast.error('Tepki kaldırılamadı.');
+                }
+              }
+            : undefined
+        }
+        onInfo={() => {
+          if (reactionTarget) setInfoMessage(reactionTarget);
+        }}
+        canEdit={
+          !!reactionTarget &&
+          reactionTarget.senderId === me.id &&
+          reactionTarget.type === 'text' &&
+          !reactionTarget.isDeleted
+        }
+        onEdit={() => {
+          if (!reactionTarget) return;
+          setEditingMessage(reactionTarget);
+          setInputText(reactionTarget.text ?? '');
+          setReplyingTo(null);
+        }}
+      />
+
+      <MessageInfoModal
+        visible={!!infoMessage}
+        message={infoMessage}
+        onClose={() => setInfoMessage(null)}
       />
 
       {/* Image Viewer Modal */}

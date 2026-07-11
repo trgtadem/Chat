@@ -1,4 +1,4 @@
-import { Message, User } from './index';
+import { Message, StatusItem, User } from './index';
 
 export type RootStackParamList = {
   Auth: undefined;
@@ -7,6 +7,7 @@ export type RootStackParamList = {
     user: User;
     friend: User;
     forwardingMessage?: Message;
+    focusMessageId?: string;
   };
   Profile: {
     user: User;
@@ -14,6 +15,7 @@ export type RootStackParamList = {
   Settings: undefined;
   EditProfile: undefined;
   AddFriend: undefined;
+  ScanFriendQR: undefined;
   Themes: undefined;
   Security: undefined;
   Privacy: undefined;
@@ -24,5 +26,25 @@ export type RootStackParamList = {
   };
   ChatWallpaper: {
     friend: User;
+  };
+  SharedMedia: {
+    friend: User;
+    messages: Message[];
+  };
+  CreateGroup: undefined;
+  GroupChat: {
+    groupId: string;
+    groupName: string;
+  };
+  Call: {
+    friend: User;
+    isVideo: boolean;
+    isIncoming?: boolean;
+    callId?: string;
+  };
+  StatusCompose: undefined;
+  StatusViewer: {
+    statuses: StatusItem[];
+    startIndex?: number;
   };
 };

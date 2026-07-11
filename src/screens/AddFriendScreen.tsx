@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,16 +8,20 @@ import {
   ScrollView,
   Image,
   Share,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ChevronLeft, Share2, UserPlus, Check, X } from 'lucide-react-native';
+import { ChevronLeft, Share2, UserPlus, Check, X, ScanLine, Inbox, Send } from 'lucide-react-native';
+import QRCode from 'react-native-qrcode-svg';
 
 import { RootStackParamList } from '../types/navigation';
 import { useAppContext, useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
+import { normalizeFriendCode } from '../utils/friendCode';
+import { useFeedback } from '../feedback/FeedbackContext';
+import { EmptyState } from '../components/EmptyState';
+import { cancelRequest, subscribeSentRequests } from '../services/friends';
 
 type AddFriendScreenProps = NativeStackScreenProps<RootStackParamList, 'AddFriend'>;
 
@@ -33,23 +37,39 @@ const REASON_MESSAGES: Record<string, string> = {
 export function AddFriendScreen({ navigation }: AddFriendScreenProps) {
   const { currentUser, incomingRequests, sendFriendRequest, acceptFriendRequest, declineFriendRequest } =
     useAppContext();
+  const { toast } = useFeedback();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const [code, setCode] = useState('');
   const [sending, setSending] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [sentRequests, setSentRequests] = useState<
+    { toUid: string; toUser?: { name?: string; surname?: string; avatar?: string } }[]
+  >([]);
 
   useLayoutEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    return subscribeSentRequests(currentUser.id, (reqs) => {
+      setSentRequests(
+        reqs.map((r) => ({
+          toUid: r.toUid,
+          toUser: (r as any).toUser,
+        }))
+      );
+    });
+  }, [currentUser?.id]);
 
   const myCode = currentUser?.friendCode ?? '...';
 
   const handleShare = async () => {
     try {
       await Share.share({
-        message: `Benimle sohbet et! Arkadaş kodum: ${myCode}`,
+        message: `Arkadaş kodum: ${myCode}`,
       });
     } catch {
       // yok say
@@ -57,16 +77,16 @@ export function AddFriendScreen({ navigation }: AddFriendScreenProps) {
   };
 
   const handleSend = async () => {
-    const trimmed = code.trim();
+    const trimmed = normalizeFriendCode(code);
     if (!trimmed) return;
     setSending(true);
     try {
       const result = await sendFriendRequest(trimmed);
       if (result.ok) {
         setCode('');
-        Alert.alert('İstek Gönderildi', 'Arkadaşlık isteğin karşı tarafa iletildi.');
+        toast.success('Arkadaşlık isteğin karşı tarafa iletildi.', 'İstek Gönderildi');
       } else {
-        Alert.alert('Gönderilemedi', REASON_MESSAGES[result.reason] ?? 'Bilinmeyen hata.');
+        toast.warning(REASON_MESSAGES[result.reason] ?? 'Bilinmeyen hata.', 'Gönderilemedi');
       }
     } finally {
       setSending(false);
@@ -78,7 +98,7 @@ export function AddFriendScreen({ navigation }: AddFriendScreenProps) {
     try {
       await acceptFriendRequest(req);
     } catch (e) {
-      Alert.alert('Hata', 'İstek kabul edilemedi.');
+      toast.error('İstek kabul edilemedi.');
     } finally {
       setBusyId(null);
     }
@@ -89,7 +109,20 @@ export function AddFriendScreen({ navigation }: AddFriendScreenProps) {
     try {
       await declineFriendRequest(fromUid);
     } catch (e) {
-      Alert.alert('Hata', 'İstek reddedilemedi.');
+      toast.error('İstek reddedilemedi.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleCancelSent = async (toUid: string) => {
+    if (!currentUser?.id) return;
+    setBusyId(toUid);
+    try {
+      await cancelRequest(currentUser.id, toUid);
+      toast.success('İstek iptal edildi.');
+    } catch {
+      toast.error('İstek iptal edilemedi.');
     } finally {
       setBusyId(null);
     }
@@ -110,10 +143,31 @@ export function AddFriendScreen({ navigation }: AddFriendScreenProps) {
         <View style={styles.codeCard}>
           <Text style={styles.cardLabel}>Senin Arkadaş Kodun</Text>
           <Text style={styles.codeText}>{myCode}</Text>
-          <TouchableOpacity style={styles.shareButton} onPress={handleShare} activeOpacity={0.85}>
-            <Share2 size={18} color={theme.colors.onAccent} />
-            <Text style={styles.shareText}>Kodu Paylaş</Text>
-          </TouchableOpacity>
+          {myCode.length === 8 && (
+            <View style={styles.qrWrap}>
+              <QRCode
+                value={myCode}
+                size={160}
+                backgroundColor={theme.colors.surface}
+                color={theme.colors.textPrimary}
+              />
+            </View>
+          )}
+          <Text style={styles.qrHint}>Bu QR’ı taratarak beni ekleyebilirler</Text>
+          <View style={styles.codeActions}>
+            <TouchableOpacity style={styles.shareButton} onPress={handleShare} activeOpacity={0.85}>
+              <Share2 size={18} color={theme.colors.onAccent} />
+              <Text style={styles.shareText}>Kodu Paylaş</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.scanButton}
+              onPress={() => navigation.navigate('ScanFriendQR')}
+              activeOpacity={0.85}
+            >
+              <ScanLine size={18} color={theme.colors.primary} />
+              <Text style={styles.scanText}>QR Tara</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.hint}>Bu kodu paylaştığın kişiler sana arkadaşlık isteği gönderebilir.</Text>
         </View>
 
@@ -151,7 +205,7 @@ export function AddFriendScreen({ navigation }: AddFriendScreenProps) {
             Gelen İstekler{incomingRequests.length > 0 ? ` (${incomingRequests.length})` : ''}
           </Text>
           {incomingRequests.length === 0 ? (
-            <Text style={styles.emptyText}>Bekleyen istek yok.</Text>
+            <EmptyState icon={Inbox} title="Bekleyen istek yok" subtitle="Gelen arkadaşlık istekleri burada görünür." />
           ) : (
             incomingRequests.map((req) => (
               <View key={req.fromUid} style={styles.requestRow}>
@@ -182,6 +236,44 @@ export function AddFriendScreen({ navigation }: AddFriendScreenProps) {
                       <X size={18} color={theme.colors.textPrimary} />
                     </TouchableOpacity>
                   </View>
+                )}
+              </View>
+            ))
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>
+            Giden İstekler{sentRequests.length > 0 ? ` (${sentRequests.length})` : ''}
+          </Text>
+          {sentRequests.length === 0 ? (
+            <EmptyState
+              icon={Send}
+              title="Giden istek yok"
+              subtitle="Gönderdiğin istekleri buradan iptal edebilirsin."
+            />
+          ) : (
+            sentRequests.map((req) => (
+              <View key={req.toUid} style={styles.requestRow}>
+                <Image
+                  source={{ uri: req.toUser?.avatar || 'https://via.placeholder.com/48' }}
+                  style={styles.avatar}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.requestName}>
+                    {req.toUser?.name || 'Kullanıcı'} {req.toUser?.surname || ''}
+                  </Text>
+                  <Text style={styles.requestSub}>Bekliyor</Text>
+                </View>
+                {busyId === req.toUid ? (
+                  <ActivityIndicator size="small" color={theme.colors.primary} />
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.declineBtn]}
+                    onPress={() => handleCancelSent(req.toUid)}
+                  >
+                    <X size={18} color={theme.colors.error} />
+                  </TouchableOpacity>
                 )}
               </View>
             ))
@@ -245,7 +337,25 @@ const makeStyles = (t: Theme) =>
       fontWeight: '800',
       letterSpacing: 4,
       marginTop: 10,
-      marginBottom: 16,
+      marginBottom: 12,
+    },
+    qrWrap: {
+      padding: 12,
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radius.lg,
+      marginBottom: 8,
+    },
+    qrHint: {
+      color: t.colors.textSecondary,
+      fontSize: 12 * t.fontScale,
+      marginBottom: 14,
+      textAlign: 'center',
+    },
+    codeActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      justifyContent: 'center',
     },
     shareButton: {
       flexDirection: 'row',
@@ -258,6 +368,22 @@ const makeStyles = (t: Theme) =>
     },
     shareText: {
       color: t.colors.onAccent,
+      fontWeight: '700',
+      fontSize: 15 * t.fontScale,
+    },
+    scanButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: t.colors.surfaceAlt,
+      borderRadius: t.radius.pill,
+      paddingHorizontal: 20,
+      paddingVertical: 12,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+    },
+    scanText: {
+      color: t.colors.primary,
       fontWeight: '700',
       fontSize: 15 * t.fontScale,
     },

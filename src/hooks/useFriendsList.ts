@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   collection,
+  doc,
   onSnapshot,
   query,
   orderBy,
@@ -9,6 +10,9 @@ import {
 import { db } from '../../firebaseConfig';
 import { Friend, User } from '../types';
 import { useAppContext } from '../context/AppContext';
+import { DEFAULT_PRIVACY, PrivacySettings } from './useUserPresence';
+import { subscribeMutedChats } from '../services/mutedChats';
+import { resolveFreshOnline } from '../utils/presence';
 
 export type HomeListItem = {
   id: string;
@@ -20,6 +24,20 @@ export type HomeListItem = {
   name?: string;
   surname?: string;
   avatar?: string;
+  muted?: boolean;
+  pinned?: boolean;
+  archived?: boolean;
+  draft?: string;
+};
+
+type PresenceEntry = {
+  online: boolean;
+  lastSeen: any;
+  lastActive?: any;
+  name?: string;
+  surname?: string;
+  avatar?: string;
+  about?: string;
 };
 
 function friendToUser(f: Friend): User {
@@ -34,9 +52,26 @@ function friendToUser(f: Friend): User {
   };
 }
 
+function applyPresencePrivacy(
+  online: boolean,
+  lastSeen: any,
+  lastActive: any,
+  privacy: PrivacySettings
+): { online: boolean; lastSeen: any } {
+  if (!privacy.showOnline) {
+    return { online: false, lastSeen: null };
+  }
+  return {
+    online: resolveFreshOnline(online, lastActive),
+    lastSeen,
+  };
+}
+
 export function useFriendsList() {
   const { currentUser, friends, isUserBlocked, friendsHydrated } = useAppContext();
   const [chats, setChats] = useState<any[]>([]);
+  const [presenceById, setPresenceById] = useState<Record<string, PresenceEntry>>({});
+  const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const [displayList, setDisplayList] = useState<HomeListItem[]>([]);
 
   useEffect(() => {
@@ -57,14 +92,113 @@ export function useFriendsList() {
   }, [currentUser?.id]);
 
   useEffect(() => {
+    if (!currentUser?.id) {
+      setMutedIds(new Set());
+      return;
+    }
+    return subscribeMutedChats(currentUser.id, setMutedIds);
+  }, [currentUser?.id]);
+
+  const friendIdsKey = useMemo(() => {
+    const ids = new Set<string>();
+    friends.forEach((f) => ids.add(f.id));
+    chats.forEach((c) => {
+      if (c.id) ids.add(c.id);
+    });
+    return [...ids].sort().join(',');
+  }, [friends, chats]);
+
+  useEffect(() => {
+    if (!friendIdsKey) {
+      setPresenceById({});
+      return;
+    }
+    const ids = friendIdsKey.split(',');
+    const unsubs = ids.map((uid) =>
+      onSnapshot(
+        doc(db, 'users', uid),
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data() as User & {
+            privacy?: PrivacySettings;
+            lastActive?: unknown;
+          };
+          const privacy = {
+            showOnline: data.privacy?.showOnline ?? DEFAULT_PRIVACY.showOnline,
+            showReadReceipts:
+              data.privacy?.showReadReceipts ?? DEFAULT_PRIVACY.showReadReceipts,
+          };
+          const visible = applyPresencePrivacy(
+            Boolean(data.online),
+            data.lastSeen ?? null,
+            data.lastActive,
+            privacy
+          );
+          setPresenceById((prev) => ({
+            ...prev,
+            [uid]: {
+              online: visible.online,
+              lastSeen: visible.lastSeen,
+              lastActive: data.lastActive,
+              name: data.name,
+              surname: data.surname,
+              avatar: data.avatar,
+              about: data.about,
+            },
+          }));
+        },
+        (error) => console.error('presence snapshot error:', uid, error)
+      )
+    );
+    return () => unsubs.forEach((u) => u());
+  }, [friendIdsKey]);
+
+  // Stale heartbeat: snapshot beklemeden online bayragini dusur
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPresenceById((prev) => {
+        let changed = false;
+        const next: Record<string, PresenceEntry> = {};
+        for (const [uid, entry] of Object.entries(prev)) {
+          const fresh = resolveFreshOnline(entry.online, entry.lastActive);
+          // entry.online burada zaten privacy uygulanmis "gorunen" online;
+          // lastActive stale ise false'a cek
+          if (entry.online && !fresh) {
+            changed = true;
+            next[uid] = { ...entry, online: false };
+          } else {
+            next[uid] = entry;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     if (!friendsHydrated) {
       setDisplayList([]);
       return;
     }
 
+    const mergePresence = (base: User): User => {
+      const p = presenceById[base.id];
+      if (!p) return base;
+      return {
+        ...base,
+        online: p.online,
+        lastSeen: p.lastSeen,
+        name: p.name ?? base.name,
+        surname: p.surname ?? base.surname,
+        avatar: p.avatar ?? base.avatar,
+        about: p.about ?? base.about,
+      };
+    };
+
     const chatUsers: HomeListItem[] = chats
       .map((chat) => {
-        const friendUser: User = {
+        const friendUser = mergePresence({
           id: chat.id ?? '',
           email: chat.email ?? '',
           name: chat.name ?? 'Unknown',
@@ -74,8 +208,15 @@ export function useFriendsList() {
           lastSeen: chat.lastSeen,
           online: chat.online ?? false,
           pushToken: chat.pushToken ?? null,
+        });
+        return {
+          ...chat,
+          isChat: true,
+          friendUser,
+          muted: mutedIds.has(friendUser.id),
+          pinned: Boolean(chat.pinned),
+          archived: Boolean(chat.archived),
         };
-        return { ...chat, isChat: true, friendUser };
       })
       .filter(
         (chat) =>
@@ -88,8 +229,16 @@ export function useFriendsList() {
     const friendsWithoutChat: HomeListItem[] = friends
       .filter((f) => !chattedUserIds.has(f.id) && !isUserBlocked(f.id))
       .map((f) => {
-        const u = friendToUser(f);
-        return { ...u, isChat: false, friendUser: u, id: f.id };
+        const u = mergePresence(friendToUser(f));
+        return {
+          ...u,
+          isChat: false,
+          friendUser: u,
+          id: f.id,
+          muted: mutedIds.has(f.id),
+          pinned: false,
+          archived: false,
+        };
       });
 
     const combined: HomeListItem[] = [
@@ -101,8 +250,17 @@ export function useFriendsList() {
       ),
     ];
 
+    combined.sort((a, b) => {
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      const ta = a.updatedAt?.toMillis?.() ?? 0;
+      const tb = b.updatedAt?.toMillis?.() ?? 0;
+      return tb - ta;
+    });
+
     setDisplayList(combined);
-  }, [friends, chats, isUserBlocked, friendsHydrated]);
+  }, [friends, chats, isUserBlocked, friendsHydrated, presenceById, mutedIds]);
 
   const filterBySearch = useCallback((items: HomeListItem[], queryText: string): HomeListItem[] => {
     const q = queryText.trim().toLowerCase();
@@ -122,5 +280,6 @@ export function useFriendsList() {
     displayList,
     friendsHydrated,
     filterBySearch,
+    mutedIds,
   };
 }

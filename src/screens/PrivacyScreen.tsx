@@ -1,30 +1,77 @@
-import React, { useLayoutEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Switch,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ChevronLeft } from 'lucide-react-native';
 
 import { RootStackParamList } from '../types/navigation';
-import { useTheme } from '../context/AppContext';
+import { useAppContext, useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
+import { DEFAULT_PRIVACY } from '../hooks/useUserPresence';
+import { getPrivacySettings, updatePrivacySettings } from '../services/privacy';
 
 type PrivacyScreenProps = NativeStackScreenProps<RootStackParamList, 'Privacy'>;
 
 export function PrivacyScreen({ navigation }: PrivacyScreenProps) {
+  const { currentUser } = useAppContext();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [showOnlineStatus, setShowOnlineStatus] = useState(true);
-  const [allowReadReceipts, setAllowReadReceipts] = useState(true);
+  const [showOnlineStatus, setShowOnlineStatus] = useState(DEFAULT_PRIVACY.showOnline);
+  const [allowReadReceipts, setAllowReadReceipts] = useState(DEFAULT_PRIVACY.showReadReceipts);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await getPrivacySettings(currentUser.id);
+        if (!cancelled) {
+          setShowOnlineStatus(p.showOnline);
+          setAllowReadReceipts(p.showReadReceipts);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
+  const persist = async (next: { showOnline?: boolean; showReadReceipts?: boolean }) => {
+    if (!currentUser?.id || saving) return;
+    setSaving(true);
+    try {
+      await updatePrivacySettings(currentUser.id, next);
+    } catch (e) {
+      console.error('privacy update error:', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onToggleOnline = (value: boolean) => {
+    setShowOnlineStatus(value);
+    void persist({ showOnline: value });
+  };
+
+  const onToggleRead = (value: boolean) => {
+    setAllowReadReceipts(value);
+    void persist({ showReadReceipts: value });
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -36,37 +83,49 @@ export function PrivacyScreen({ navigation }: PrivacyScreenProps) {
         <View style={{ width: 40 }} />
       </View>
 
-      <View style={styles.content}>
-        <View style={styles.row}>
-          <View style={styles.rowTextWrap}>
-            <Text style={styles.rowTitle}>Çevrimiçi Durum</Text>
-            <Text style={styles.rowSubtitle}>Diğer kullanıcılar çevrimiçi durumunu görebilir.</Text>
-          </View>
-          <Switch
-            value={showOnlineStatus}
-            onValueChange={setShowOnlineStatus}
-            trackColor={{ true: theme.colors.primary, false: theme.colors.border }}
-            thumbColor={theme.colors.surface}
-          />
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.colors.primary} />
         </View>
-
-        <View style={styles.row}>
-          <View style={styles.rowTextWrap}>
-            <Text style={styles.rowTitle}>Okundu Bilgisi</Text>
-            <Text style={styles.rowSubtitle}>Mesajları okuduğunda mavi tik gönder.</Text>
+      ) : (
+        <View style={styles.content}>
+          <View style={styles.row}>
+            <View style={styles.rowTextWrap}>
+              <Text style={styles.rowTitle}>Çevrimiçi / Son görülme</Text>
+              <Text style={styles.rowSubtitle}>
+                Kapalıysa diğerleri seni çevrimdışı görür; son görülme kimseye gösterilmez.
+              </Text>
+            </View>
+            <Switch
+              value={showOnlineStatus}
+              onValueChange={onToggleOnline}
+              disabled={saving}
+              trackColor={{ true: theme.colors.primary, false: theme.colors.border }}
+              thumbColor={theme.colors.surface}
+            />
           </View>
-          <Switch
-            value={allowReadReceipts}
-            onValueChange={setAllowReadReceipts}
-            trackColor={{ true: theme.colors.primary, false: theme.colors.border }}
-            thumbColor={theme.colors.surface}
-          />
-        </View>
 
-        <Text style={styles.infoText}>
-          Not: Bu ayarlar şu an cihaz içi önizleme olarak çalışır; kalıcı gizlilik senkronu bir sonraki adımda Firestore ile bağlanacaktır.
-        </Text>
-      </View>
+          <View style={styles.row}>
+            <View style={styles.rowTextWrap}>
+              <Text style={styles.rowTitle}>Okundu Bilgisi</Text>
+              <Text style={styles.rowSubtitle}>
+                Kapalıysa mesajlar yalnızca iletildi olarak işaretlenir; mavi tik gönderilmez.
+              </Text>
+            </View>
+            <Switch
+              value={allowReadReceipts}
+              onValueChange={onToggleRead}
+              disabled={saving}
+              trackColor={{ true: theme.colors.primary, false: theme.colors.border }}
+              thumbColor={theme.colors.surface}
+            />
+          </View>
+
+          <Text style={styles.infoText}>
+            Bu ayarlar hesabına kaydedilir ve tüm cihazlarda geçerlidir.
+          </Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -100,6 +159,7 @@ const makeStyles = (t: Theme) =>
       fontSize: 20 * t.fontScale,
       fontWeight: '700',
     },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     content: {
       padding: 16,
       gap: 12,

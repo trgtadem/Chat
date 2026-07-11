@@ -9,25 +9,47 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { ChevronLeft, PencilLine, Circle } from 'lucide-react-native';
+import { ChevronLeft, PencilLine, Circle, UserMinus } from 'lucide-react-native';
 
 import { RootStackParamList } from '../types/navigation';
 import { useAppContext, useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
 import { formatLastSeen } from '../utils';
+import { removeFriend } from '../services/account';
+import { useFeedback } from '../feedback/FeedbackContext';
 
 type ProfileScreenProps = NativeStackScreenProps<RootStackParamList, 'Profile'>;
 
 export function ProfileScreen({ route, navigation }: ProfileScreenProps) {
-  const { currentUser } = useAppContext();
+  const { currentUser, isFriend } = useAppContext();
+  const { toast, confirm } = useFeedback();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = route.params;
   const isOwnProfile = currentUser?.id === user.id;
+  const canUnfriend = !isOwnProfile && !!currentUser?.id && isFriend(user.id);
 
   useLayoutEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
+
+  const handleUnfriend = async () => {
+    if (!currentUser?.id) return;
+    const ok = await confirm({
+      title: 'Arkadaşlıktan çıkar',
+      message: `${user.name} ile arkadaşlığın kaldırılacak.`,
+      confirmLabel: 'Çıkar',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await removeFriend(currentUser.id, user.id);
+      toast.success('Arkadaşlıktan çıkarıldı.');
+      navigation.navigate('Home');
+    } catch {
+      toast.error('İşlem başarısız.');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -76,6 +98,17 @@ export function ProfileScreen({ route, navigation }: ProfileScreenProps) {
             <Text style={styles.editButtonText}>Profili Düzenle</Text>
           </TouchableOpacity>
         ) : null}
+
+        {canUnfriend ? (
+          <TouchableOpacity
+            style={styles.unfriendButton}
+            onPress={handleUnfriend}
+            activeOpacity={0.86}
+          >
+            <UserMinus size={18} color="#fff" />
+            <Text style={styles.unfriendText}>Arkadaşlıktan Çıkar</Text>
+          </TouchableOpacity>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -83,10 +116,7 @@ export function ProfileScreen({ route, navigation }: ProfileScreenProps) {
 
 const makeStyles = (t: Theme) =>
   StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: t.colors.background,
-    },
+    container: { flex: 1, backgroundColor: t.colors.background },
     header: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -110,14 +140,8 @@ const makeStyles = (t: Theme) =>
       fontSize: 20 * t.fontScale,
       fontWeight: '700',
     },
-    content: {
-      padding: 18,
-      alignItems: 'center',
-    },
-    avatarWrap: {
-      alignItems: 'center',
-      marginTop: 8,
-    },
+    content: { padding: 18, alignItems: 'center' },
+    avatarWrap: { alignItems: 'center', marginTop: 8 },
     avatar: {
       width: 118,
       height: 118,
@@ -180,6 +204,22 @@ const makeStyles = (t: Theme) =>
     },
     editButtonText: {
       color: t.colors.onAccent,
+      fontWeight: '700',
+      fontSize: 15 * t.fontScale,
+    },
+    unfriendButton: {
+      marginTop: 12,
+      width: '100%',
+      backgroundColor: t.colors.error,
+      borderRadius: t.radius.lg,
+      paddingVertical: 16,
+      justifyContent: 'center',
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+    },
+    unfriendText: {
+      color: '#fff',
       fontWeight: '700',
       fontSize: 15 * t.fontScale,
     },

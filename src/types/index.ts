@@ -6,11 +6,15 @@ export type User = {
   surname: string;
   avatar: string;
   about?: string;
-  lastSeen: any; // Firestore ServerTimestamp
+  lastSeen: any;
   online: boolean;
+  lastActive?: any;
   pushToken?: string;
-  /** Benzersiz arkadas kodu (paylasilarak arkadas eklemek icin) */
   friendCode?: string;
+  privacy?: {
+    showOnline: boolean;
+    showReadReceipts: boolean;
+  };
 };
 
 /** Arkadaslik istegi (users/{toUid}/friendRequests/{fromUid}) */
@@ -36,23 +40,35 @@ export type Friend = {
   since: any;
 };
 
+export type MessageType = 'text' | 'image' | 'audio' | 'file' | 'video';
+
 export type Message = {
   id: string;
   chatId: string;
   text?: string;
   senderId: string;
-  createdAt: any; // Firestore ServerTimestamp
-  status?: 'sent' | 'read';
-  type: 'text' | 'image' | 'audio' | 'file';
+  createdAt: any;
+  status?: 'sent' | 'delivered' | 'read';
+  deliveredAt?: any;
+  readAt?: any;
+  type: MessageType;
   imageUrl?: string;
   audioUrl?: string;
   fileUrl?: string;
+  videoUrl?: string;
   fileName?: string;
   fileType?: string;
   replyTo?: Message;
+  /** Herkes icin soft delete */
   isDeleted?: boolean;
+  /** Yalnizca bu uid'ler icin gizle */
+  deletedFor?: string[];
   forwarded?: boolean;
   forwardedFrom?: string;
+  cloudinaryDeleteToken?: string | null;
+  /** uid -> emoji */
+  reactions?: Record<string, string>;
+  editedAt?: any;
 };
 
 export type BlockedUser = {
@@ -63,28 +79,12 @@ export type BlockedUser = {
   user?: User;
 };
 
-export type Session = {
-  id: string;
-  deviceName: string;
-  deviceType: 'mobile' | 'desktop' | 'tablet';
-  browser?: string;
-  os?: string;
-  ip?: string;
-  location?: string;
-  lastActive: any;
-  isCurrent: boolean;
-};
-
 export type WallpaperOption = {
   id: string;
   type: 'color' | 'gradient' | 'pattern' | 'image';
-  /** color: hex; image: url; pattern: taban renk hex */
   value: string;
-  /** gradient tipi icin renk duraklari */
   gradient?: string[];
-  /** pattern tipi icin desen anahtari (ChatBackground'da cizilir) */
   pattern?: string;
-  /** pattern desen rengi (opsiyonel) */
   patternColor?: string;
   preview?: string;
   name?: string;
@@ -93,9 +93,7 @@ export type WallpaperOption = {
 export type ThemeMode = 'system' | 'light' | 'dark' | 'amoled';
 
 export type ThemeSettings = {
-  /** Gorunum modu */
   mode: ThemeMode;
-  /** Vurgu (accent) rengi - hex */
   accentColor: string;
   chatBubbleStyle: 'default' | 'minimal' | 'rounded';
   fontSize: 'small' | 'medium' | 'large';
@@ -110,8 +108,36 @@ export type ChatSettings = {
   customNotificationSound?: string;
 };
 
-export type SharedMedia = {
-  images: Message[];
-  files: Message[];
-  links: Message[];
+/** Grup ozeti (Home listesi) */
+export type GroupSummary = {
+  id: string;
+  name: string;
+  avatar?: string;
+  memberIds: string[];
+  createdBy: string;
+  updatedAt?: any;
+  lastMessage?: any;
+};
+
+export type GroupMember = {
+  uid: string;
+  role: 'admin' | 'member';
+  name: string;
+  surname: string;
+  avatar: string;
+  joinedAt: any;
+};
+
+/** 24s durum */
+export type StatusItem = {
+  id: string;
+  uid: string;
+  type: 'text' | 'image';
+  text?: string;
+  imageUrl?: string;
+  createdAt: any;
+  expiresAt: any;
+  viewedBy?: string[];
+  authorName?: string;
+  authorAvatar?: string;
 };

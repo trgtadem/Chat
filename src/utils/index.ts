@@ -48,36 +48,3 @@ export const formatLastSeen = (timestamp: any) => {
     return '';
   }
 };
-
-export async function sendPushNotification(pushToken: string, title: string, body: string) {
-  if (!pushToken) {
-    console.warn('Push token is empty, skipping notification');
-    return;
-  }
-
-  const message = {
-    to: pushToken,
-    sound: 'default',
-    title,
-    body,
-    data: { someData: 'goes here' },
-  };
-
-  try {
-    const response = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(message),
-    });
-
-    if (!response.ok) {
-      console.error('Push notification failed:', response.status, response.statusText);
-    }
-  } catch (error) {
-    console.error('Push notification error:', error);
-  }
-}

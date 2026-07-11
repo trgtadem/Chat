@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
   ScrollView,
   LayoutAnimation,
-  Alert,
   Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -39,6 +38,7 @@ import { User } from '../types';
 import { useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
 import { ensureFriendCode } from '../services/friends';
+import { useFeedback } from '../feedback/FeedbackContext';
 
 type RootStackParamList = {
   Auth: undefined;
@@ -73,6 +73,7 @@ function mapAuthError(error: any): string {
 
 export function AuthScreen({ navigation }: AuthScreenProps) {
   const theme = useTheme();
+  const { toast } = useFeedback();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -172,11 +173,11 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       await signOut(auth);
 
       // 6. Kullanıcıya bilgi ver ve Login ekranına dön
-      Alert.alert(
-        'Kayıt Başarılı',
+      toast.success(
         'Doğrulama maili gönderildi. Lütfen mailinizi onaylayıp giriş yapın.',
-        [{ text: 'Tamam', onPress: () => setIsLoginMode(true) }]
+        'Kayıt Başarılı'
       );
+      setIsLoginMode(true);
     } catch (error: any) {
       console.error('Register error:', error?.code, error?.message);
       if (error.code === 'auth/email-already-in-use') {
@@ -222,9 +223,9 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
     setIsResending(true);
     try {
       await sendEmailVerification(auth.currentUser);
-      Alert.alert(
-        'Email Gönderildi',
-        'Doğrulama e-postası tekrar gönderildi. Lütfen gelen kutunuzu (ve gereksiz kutusunu) kontrol edin.'
+      toast.success(
+        'Doğrulama e-postası tekrar gönderildi. Lütfen gelen kutunuzu (ve gereksiz kutusunu) kontrol edin.',
+        'Email Gönderildi'
       );
     } catch (error: any) {
       showError('E-posta gönderilemedi: ' + error.message);

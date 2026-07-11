@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +24,7 @@ import {
   GRADIENT_WALLPAPERS,
   PATTERN_WALLPAPERS,
 } from '../theme/wallpapers';
+import { useFeedback } from '../feedback/FeedbackContext';
 
 type ChatWallpaperScreenProps = NativeStackScreenProps<RootStackParamList, 'ChatWallpaper'>;
 
@@ -40,6 +40,7 @@ const CATEGORIES: { key: Category; label: string }[] = [
 export function ChatWallpaperScreen({ navigation, route }: ChatWallpaperScreenProps) {
   const { friend } = route.params;
   const { currentUser, getChatSettings, updateChatSettings, updateThemeSettings } = useAppContext();
+  const { toast } = useFeedback();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
@@ -74,7 +75,7 @@ export function ChatWallpaperScreen({ navigation, route }: ChatWallpaperScreenPr
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('İzin gerekli', 'Duvar kağıdı seçmek için galeri izni gerekli.');
+        toast.info('Duvar kağıdı seçmek için galeri izni gerekli.', 'İzin gerekli');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -84,12 +85,13 @@ export function ChatWallpaperScreen({ navigation, route }: ChatWallpaperScreenPr
       });
       if (!result.canceled && result.assets[0]) {
         setUploading(true);
-        const url = await uploadToCloudinary(result.assets[0].uri, 'wallpaper.jpg', 'image/jpeg');
+        const uploaded = await uploadToCloudinary(result.assets[0].uri, 'wallpaper.jpg', 'image/jpeg');
+        const url = uploaded.url;
         setSelected({ id: `img-${Date.now()}`, type: 'image', value: url, name: 'Fotoğrafım' });
       }
     } catch (error) {
       console.error('Wallpaper upload error:', error);
-      Alert.alert('Hata', 'Fotoğraf yüklenirken bir sorun oluştu.');
+      toast.error('Fotoğraf yüklenirken bir sorun oluştu.');
     } finally {
       setUploading(false);
     }

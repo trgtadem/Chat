@@ -8,7 +8,6 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -25,11 +24,13 @@ import { User } from '../types';
 import { useAppContext, useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
 import { RootStackParamList } from '../types/navigation';
+import { useFeedback } from '../feedback/FeedbackContext';
 
 type EditProfileScreenProps = NativeStackScreenProps<RootStackParamList, 'EditProfile'>;
 
 export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
   const { currentUser, setCurrentUser } = useAppContext();
+  const { toast } = useFeedback();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [name, setName] = useState(currentUser?.name ?? 'Unknown');
@@ -50,7 +51,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
-        Alert.alert('Permission required', 'Avatar değiştirmek için medya izni gerekli.');
+        toast.info('Avatar değiştirmek için medya izni gerekli.', 'İzin gerekli');
         return;
       }
 
@@ -63,12 +64,13 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
 
       if (!result.canceled && result.assets[0]) {
         setLoading(true);
-        const avatarUrl = await uploadToCloudinary(result.assets[0].uri, 'avatar.jpg', 'image/jpeg');
+        const uploaded = await uploadToCloudinary(result.assets[0].uri, 'avatar.jpg', 'image/jpeg');
+        const avatarUrl = uploaded.url;
         setAvatar(avatarUrl);
       }
     } catch (error) {
       console.error('Avatar picking error:', error);
-      Alert.alert('Error', 'Avatar yüklenirken hata oluştu.');
+      toast.error('Avatar yüklenirken hata oluştu.');
     } finally {
       setLoading(false);
     }
@@ -76,7 +78,7 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
 
   const handleSave = async () => {
     if (!name.trim() || !surname.trim()) {
-      Alert.alert('Validation', 'Ad ve soyad zorunludur.');
+      toast.warning('Ad ve soyad zorunludur.', 'Eksik bilgi');
       return;
     }
 
@@ -95,15 +97,11 @@ export function EditProfileScreen({ navigation }: EditProfileScreenProps) {
         ...updateData,
       });
 
-      Alert.alert('Başarılı', 'Profilin güncellendi.', [
-        {
-          text: 'Tamam',
-          onPress: () => navigation.goBack(),
-        },
-      ]);
+      toast.success('Profilin güncellendi.');
+      navigation.goBack();
     } catch (error: any) {
       console.error('Save error:', error);
-      Alert.alert('Error', error.message || 'Profil güncellenemedi.');
+      toast.error(error.message || 'Profil güncellenemedi.');
     } finally {
       setLoading(false);
     }
