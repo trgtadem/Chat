@@ -38,7 +38,7 @@ yarn-error.*
 *-firebase-adminsdk-*.json
 **/firebase-adminsdk*.json
 service-account*.json
-
+google-services.json
 # typescript
 *.tsbuildinfo
 
