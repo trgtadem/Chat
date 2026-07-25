@@ -114,6 +114,43 @@ export function useFriendsList() {
       return;
     }
     const ids = friendIdsKey.split(',');
+    // Batch presence updates (~1.2s) to avoid Home list thrash on heartbeats
+    const pending = new Map<string, PresenceEntry>();
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = () => {
+      flushTimer = null;
+      if (!pending.size) return;
+      const batch = new Map(pending);
+      pending.clear();
+      setPresenceById((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [uid, entry] of batch) {
+          const old = prev[uid];
+          if (
+            !old ||
+            old.online !== entry.online ||
+            old.lastSeen !== entry.lastSeen ||
+            old.lastActive !== entry.lastActive ||
+            old.name !== entry.name ||
+            old.avatar !== entry.avatar ||
+            old.surname !== entry.surname ||
+            old.about !== entry.about
+          ) {
+            next[uid] = entry;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    };
+
+    const scheduleFlush = () => {
+      if (flushTimer) return;
+      flushTimer = setTimeout(flush, 1200);
+    };
+
     const unsubs = ids.map((uid) =>
       onSnapshot(
         doc(db, 'users', uid),
@@ -134,23 +171,25 @@ export function useFriendsList() {
             data.lastActive,
             privacy
           );
-          setPresenceById((prev) => ({
-            ...prev,
-            [uid]: {
-              online: visible.online,
-              lastSeen: visible.lastSeen,
-              lastActive: data.lastActive,
-              name: data.name,
-              surname: data.surname,
-              avatar: data.avatar,
-              about: data.about,
-            },
-          }));
+          pending.set(uid, {
+            online: visible.online,
+            lastSeen: visible.lastSeen,
+            lastActive: data.lastActive,
+            name: data.name,
+            surname: data.surname,
+            avatar: data.avatar,
+            about: data.about,
+          });
+          scheduleFlush();
         },
         (error) => console.error('presence snapshot error:', uid, error)
       )
     );
-    return () => unsubs.forEach((u) => u());
+    return () => {
+      unsubs.forEach((u) => u());
+      if (flushTimer) clearTimeout(flushTimer);
+      flush();
+    };
   }, [friendIdsKey]);
 
   // Stale heartbeat: snapshot beklemeden online bayragini dusur
@@ -281,5 +320,6 @@ export function useFriendsList() {
     friendsHydrated,
     filterBySearch,
     mutedIds,
+    friendIdsKey,
   };
 }

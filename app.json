@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Arkadaş eklemek ve görüntülü arama için kamera erişimi gerekir.",
-        "NSMicrophoneUsageDescription": "Sesli mesaj ve arama için mikrofon erişimi gerekir."
+        "NSMicrophoneUsageDescription": "Sesli mesaj ve arama için mikrofon erişimi gerekir.",
+        "NSPhotoLibraryUsageDescription": "Fotoğraf ve video göndermek için galeri erişimi gerekir."
       }
     },
     "android": {
@@ -31,6 +32,9 @@
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "READ_EXTERNAL_STORAGE",
         "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
@@ -62,6 +66,12 @@
           "icon": "./assets/adaptive-icon.png",
           "color": "#3B82F6",
           "defaultChannel": "default"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Fotoğraf ve video göndermek için galeri erişimi gerekir."
         }
       ],
       [

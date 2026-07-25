@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,20 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import { Paperclip, Send, Plus, Mic } from 'lucide-react-native';
+import { Send, Plus, Mic, Image as ImageIcon } from 'lucide-react-native';
 import { useThemedStyles } from '../../hooks/useThemedStyles';
 import { Theme } from '../../theme';
+import { Message } from '../../types';
+import { getDraft, setDraft } from '../../services/chatList';
 
 type ChatInputBarProps = {
-  inputText: string;
-  onChangeText: (text: string) => void;
-  onSend: () => void;
+  chatId: string;
+  editingMessage: Message | null;
+  onCancelEdit?: () => void;
+  /** Parent'a metin gonderme — state parent'ta tutulmaz */
+  onSendText: (text: string) => Promise<void> | void;
+  /** Yazma aktivitesi (typing indicator) — metin degil boolean */
+  onTypingActivity: (hasText: boolean) => void;
   onPickImage: () => void;
   onPickFile: () => void;
   onPickVideo?: () => void;
@@ -25,13 +31,17 @@ type ChatInputBarProps = {
   recordingDuration: number;
   isSending: boolean;
   disabled: boolean;
-  editing?: boolean;
 };
 
+/**
+ * Metin state'i burada — ChatScreen her tus vurusunda yeniden cizilmez.
+ */
 export function ChatInputBar({
-  inputText,
-  onChangeText,
-  onSend,
+  chatId,
+  editingMessage,
+  onCancelEdit,
+  onSendText,
+  onTypingActivity,
   onPickImage,
   onPickFile,
   onPickVideo,
@@ -42,27 +52,88 @@ export function ChatInputBar({
   recordingDuration,
   isSending,
   disabled,
-  editing,
 }: ChatInputBarProps) {
   const styles = useThemedStyles(makeStyles);
   const theme = styles.theme;
+  const [text, setText] = useState('');
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editing = !!editingMessage;
+
+  // Taslak yukle (edit degilken)
+  useEffect(() => {
+    if (!chatId || editingMessage) return;
+    let cancelled = false;
+    getDraft(chatId).then((d) => {
+      if (!cancelled && d) setText(d);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [chatId]);
+
+  // Duzenleme modu
+  useEffect(() => {
+    if (editingMessage) {
+      setText(editingMessage.text ?? '');
+    }
+  }, [editingMessage?.id]);
+
+  // Taslak kaydet
+  useEffect(() => {
+    if (!chatId || editing) return;
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      void setDraft(chatId, text);
+    }, 400);
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    };
+  }, [text, chatId, editing]);
+
+  const handleChange = useCallback(
+    (next: string) => {
+      setText(next);
+      onTypingActivity(Boolean(next.trim()));
+    },
+    [onTypingActivity]
+  );
+
+  const handleSend = useCallback(async () => {
+    const trimmed = text.trim();
+    if (!trimmed || isSending || disabled) return;
+    try {
+      await onSendText(trimmed);
+      setText('');
+      onTypingActivity(false);
+      if (chatId && !editing) void setDraft(chatId, '');
+      if (editing) onCancelEdit?.();
+    } catch {
+      /* parent toast */
+    }
+  }, [text, isSending, disabled, onSendText, onTypingActivity, chatId, editing, onCancelEdit]);
 
   return (
     <View style={styles.outer}>
-      {editing ? <Text style={styles.editingHint}>Mesajı düzenliyorsun</Text> : null}
+      {editing ? (
+        <View style={styles.editingRow}>
+          <Text style={styles.editingHint}>Mesajı düzenliyorsun</Text>
+          <TouchableOpacity onPress={onCancelEdit}>
+            <Text style={styles.editingCancel}>İptal</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
       <View style={styles.inputWrapper}>
         <View style={styles.inputContainer}>
           <TouchableOpacity
             style={styles.attachButton}
             onPress={onPickImage}
-            onLongPress={onPickVideo}
-            delayLongPress={400}
-            disabled={disabled || isUploading || isRecording || !!editing}
+            disabled={disabled || isUploading || isRecording || editing}
+            accessibilityLabel="Fotoğraf gönder"
           >
             {isUploading ? (
               <ActivityIndicator size="small" color={theme.colors.textSecondary} />
             ) : (
-              <Paperclip size={22} color={theme.colors.textSecondary} />
+              <ImageIcon size={22} color={theme.colors.textSecondary} />
             )}
           </TouchableOpacity>
 
@@ -70,8 +141,8 @@ export function ChatInputBar({
             style={styles.chatInput}
             placeholder={editing ? 'Düzenlenen mesaj...' : 'Bir mesaj yaz...'}
             placeholderTextColor={theme.colors.textSecondary}
-            value={inputText}
-            onChangeText={onChangeText}
+            value={text}
+            onChangeText={handleChange}
             multiline
             editable={!isRecording && !disabled}
           />
@@ -79,7 +150,10 @@ export function ChatInputBar({
           <TouchableOpacity
             style={styles.attachButton}
             onPress={onPickFile}
-            disabled={disabled || isUploading || isRecording || !!editing}
+            onLongPress={onPickVideo}
+            delayLongPress={400}
+            disabled={disabled || isUploading || isRecording || editing}
+            accessibilityLabel="Dosya veya video"
           >
             <Plus size={22} color={theme.colors.textSecondary} />
           </TouchableOpacity>
@@ -100,17 +174,17 @@ export function ChatInputBar({
             <TouchableOpacity
               style={styles.recordButton}
               onPress={onStartRecording}
-              disabled={disabled || !!editing}
+              disabled={disabled || editing}
             >
               <Mic size={22} color={theme.colors.primary} />
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={onSend}
+              onPress={handleSend}
               style={[
                 styles.sendButton,
-                (isSending || !inputText.trim() || disabled) && { opacity: 0.5 },
+                (isSending || !text.trim() || disabled) && { opacity: 0.5 },
               ]}
-              disabled={isSending || !inputText.trim() || disabled}
+              disabled={isSending || !text.trim() || disabled}
             >
               <Send size={24} color={theme.colors.onAccent} />
             </TouchableOpacity>
@@ -129,11 +203,21 @@ const makeStyles = (theme: Theme) =>
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border,
     },
-    editingHint: {
+    editingRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
       paddingHorizontal: 16,
       paddingTop: 8,
+    },
+    editingHint: {
       fontSize: 12 * theme.fontScale,
       color: theme.colors.primary,
+      fontWeight: '600',
+    },
+    editingCancel: {
+      fontSize: 13 * theme.fontScale,
+      color: theme.colors.textSecondary,
       fontWeight: '600',
     },
     inputWrapper: {

@@ -31,6 +31,7 @@ import { SwipeableMessage } from '../components/SwipeableMessage';
 import { ChatBackground } from '../components/ChatBackground';
 import { ChatHeader } from '../components/chat/ChatHeader';
 import { ChatInputBar } from '../components/chat/ChatInputBar';
+import { MediaPreviewBar, PendingMedia } from '../components/chat/MediaPreviewBar';
 import { ChatMenu } from '../components/chat/ChatMenu';
 import { useAppContext, useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
@@ -49,7 +50,6 @@ import {
   deleteMessageForMe,
   deleteMessageForEveryone,
 } from '../services/messageActions';
-import { getDraft, setDraft } from '../services/chatList';
 import { setTypingStatus, subscribeTyping } from '../services/typing';
 import { subscribeStarredIds, toggleStarMessage } from '../services/starred';
 import { isChatMuted, muteChat, unmuteChat } from '../services/mutedChats';
@@ -91,9 +91,9 @@ export function ChatScreen({
       lastSeen: liveFriend.lastSeen,
     };
   }, [routeFriend, liveFriend]);
-  const [inputText, setInputText] = useState('');
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [friendIsTyping, setFriendIsTyping] = useState(false);
@@ -111,7 +111,6 @@ export function ChatScreen({
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const forwardDoneRef = useRef<string | null>(null);
   const focusDoneRef = useRef<string | null>(null);
-  const draftTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const flatListRef = useRef<FlatList>(null);
   // Otomatik kaydirma kontrolu: ilk acilista en alta in; kullanici yukari
@@ -171,30 +170,6 @@ export function ChatScreen({
       .then(setChatMuted)
       .catch(() => setChatMuted(false));
   }, [me?.id, friend?.id]);
-
-  // Taslak yukle
-  useEffect(() => {
-    if (!chatId) return;
-    let cancelled = false;
-    getDraft(chatId).then((d) => {
-      if (!cancelled && d) setInputText(d);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [chatId]);
-
-  // Taslak kaydet (debounce)
-  useEffect(() => {
-    if (!chatId || editingMessage) return;
-    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
-    draftTimerRef.current = setTimeout(() => {
-      void setDraft(chatId, inputText);
-    }, 400);
-    return () => {
-      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
-    };
-  }, [inputText, chatId, editingMessage]);
 
   // Yildizli mesaj / arama: hedef mesaja kaydir
   useEffect(() => {
@@ -392,38 +367,46 @@ export function ChatScreen({
     };
   }, [navigation, clearTypingRemoteOnly, discardRecording]);
 
-  const handlePickImage = async () => {
+  const handlePickImage = useCallback(async () => {
+    if (!me || !friend?.id) return;
+    if (isBlocked || !canMessage) {
+      toast.warning('Bu kişiyle mesajlaşmak için arkadaş olmalısınız.', 'Mesaj gönderilemedi');
+      return;
+    }
     try {
-      const permissionResult =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
         toast.info('Görsel göndermek için galeri izni vermelisin.', 'İzin gerekli');
         return;
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: false,
         quality: 0.8,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        setIsUploading(true);
-        const uploaded = await uploadToCloudinary(result.assets[0].uri);
-        await sendMediaMessage('image', {
-          imageUrl: uploaded.url,
-          cloudinaryDeleteToken: uploaded.deleteToken ?? null,
-        });
-        setIsUploading(false);
-      }
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const asset = result.assets[0];
+      setPendingMedia({
+        uri: asset.uri,
+        kind: 'image',
+        fileName: asset.fileName || `image_${Date.now()}.jpg`,
+        mimeType: asset.mimeType || 'image/jpeg',
+      });
     } catch (error) {
       console.error('Image picking error:', error);
-      toast.error('Görsel yüklenemedi. Lütfen tekrar dene.');
-      setIsUploading(false);
+      toast.error('Görsel seçilemedi.');
     }
-  };
+  }, [me, friend, isBlocked, canMessage, toast]);
 
-  const handlePickVideo = async () => {
+  const handlePickVideo = useCallback(async () => {
+    if (!me || !friend?.id) return;
+    if (isBlocked || !canMessage) {
+      toast.warning('Bu kişiyle mesajlaşmak için arkadaş olmalısınız.', 'Mesaj gönderilemedi');
+      return;
+    }
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
@@ -431,32 +414,83 @@ export function ChatScreen({
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['videos'],
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
         allowsEditing: false,
         quality: 0.8,
         videoMaxDuration: 120,
       });
-      if (!result.canceled && result.assets[0]) {
-        setIsUploading(true);
-        const asset = result.assets[0];
-        const uploaded = await uploadToCloudinary(
-          asset.uri,
-          `video_${Date.now()}.mp4`,
-          asset.mimeType || 'video/mp4',
-          'video'
-        );
-        await sendMediaMessage('video', {
-          videoUrl: uploaded.url,
-          cloudinaryDeleteToken: uploaded.deleteToken ?? null,
-        });
-        setIsUploading(false);
-      }
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const asset = result.assets[0];
+      setPendingMedia({
+        uri: asset.uri,
+        kind: 'video',
+        fileName: `video_${Date.now()}.mp4`,
+        mimeType: asset.mimeType || 'video/mp4',
+      });
     } catch (error) {
       console.error('Video picking error:', error);
-      toast.error('Video yüklenemedi.');
-      setIsUploading(false);
+      toast.error('Video seçilemedi.');
     }
-  };
+  }, [me, friend, isBlocked, canMessage, toast]);
+
+  const handleSendPendingMedia = useCallback(
+    async (caption: string) => {
+      if (!pendingMedia || !me || !friend?.id || isUploading) return;
+      setIsUploading(true);
+      try {
+        if (pendingMedia.kind === 'image') {
+          const uploaded = await uploadToCloudinary(
+            pendingMedia.uri,
+            pendingMedia.fileName || `image_${Date.now()}.jpg`,
+            pendingMedia.mimeType || 'image/jpeg',
+            'image'
+          );
+          if (!uploaded?.url) throw new Error('Upload URL yok');
+          await sendMediaMessageSvc(
+            chatId,
+            me,
+            friend,
+            'image',
+            {
+              imageUrl: uploaded.url,
+              cloudinaryDeleteToken: uploaded.deleteToken ?? null,
+              text: caption || null,
+            },
+            replyingTo
+          );
+        } else {
+          const uploaded = await uploadToCloudinary(
+            pendingMedia.uri,
+            pendingMedia.fileName || `video_${Date.now()}.mp4`,
+            pendingMedia.mimeType || 'video/mp4',
+            'video'
+          );
+          if (!uploaded?.url) throw new Error('Upload URL yok');
+          await sendMediaMessageSvc(
+            chatId,
+            me,
+            friend,
+            'video',
+            {
+              videoUrl: uploaded.url,
+              cloudinaryDeleteToken: uploaded.deleteToken ?? null,
+              text: caption || null,
+            },
+            replyingTo
+          );
+        }
+        setReplyingTo(null);
+        setPendingMedia(null);
+      } catch (error) {
+        console.error('Media send error:', error);
+        toast.error('Medya gönderilemedi. Lütfen tekrar dene.');
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [pendingMedia, me, friend, isUploading, chatId, replyingTo, toast]
+  );
 
   const handlePickFile = async () => {
     try {
@@ -576,35 +610,33 @@ export function ChatScreen({
     }
   };
 
-  const handleTyping = (text: string) => {
-    if (!canMessage || !me?.id) {
-      setInputText(text);
-      return;
-    }
-    setInputText(text);
-
-    if (!text.trim()) {
-      clearTyping();
-      return;
-    }
-
-    const now = Date.now();
-    if (!isTypingRef.current) {
-      isTypingRef.current = true;
-      lastTypingWriteRef.current = now;
-      setTypingStatus(chatId, me.id, true).catch(console.error);
-    } else if (now - lastTypingWriteRef.current > 2000) {
-      lastTypingWriteRef.current = now;
-      setTypingStatus(chatId, me.id, true).catch(() => {});
-    }
-
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-
-    typingTimeoutRef.current = setTimeout(() => {
-      isTypingRef.current = false;
-      setTypingStatus(chatId, me.id, false).catch(console.error);
-    }, 2000);
-  };
+  const handleTypingActivity = useCallback(
+    (hasText: boolean) => {
+      if (!canMessage || !me?.id || !chatId) {
+        if (!hasText) clearTyping();
+        return;
+      }
+      if (!hasText) {
+        clearTyping();
+        return;
+      }
+      const now = Date.now();
+      if (!isTypingRef.current) {
+        isTypingRef.current = true;
+        lastTypingWriteRef.current = now;
+        setTypingStatus(chatId, me.id, true).catch(console.error);
+      } else if (now - lastTypingWriteRef.current > 2000) {
+        lastTypingWriteRef.current = now;
+        setTypingStatus(chatId, me.id, true).catch(() => {});
+      }
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        isTypingRef.current = false;
+        setTypingStatus(chatId, me.id, false).catch(console.error);
+      }, 2000);
+    },
+    [canMessage, me?.id, chatId, clearTyping]
+  );
 
   const sendMediaMessage = async (
     type: 'image' | 'audio' | 'file' | 'video',
@@ -631,42 +663,49 @@ export function ChatScreen({
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!me || !friend?.id) return;
-    if (isBlocked) {
-      toast.warning('Bu kullanıcıyı engellediğin için mesaj gönderemezsin.', 'Engellendi');
-      return;
-    }
-    if (!canMessage) {
-      toast.warning('Bu kişiyle mesajlaşmak için önce arkadaş olmalısınız.', 'Arkadaş değil');
-      return;
-    }
-
-    if (!inputText.trim()) return;
-
-    clearTyping();
-    setIsSending(true);
-    const textToSend = inputText;
-    setInputText('');
-
-    try {
-      if (editingMessage) {
-        await editMessageText(chatId, editingMessage.id, textToSend.trim());
-        setEditingMessage(null);
-        toast.success('Mesaj düzenlendi.');
-      } else {
-        await sendTextMessage(chatId, me, friend, textToSend, replyingTo);
-        setReplyingTo(null);
-        void setDraft(chatId, '');
+  const handleSendText = useCallback(
+    async (textToSend: string) => {
+      if (!me || !friend?.id) return;
+      if (isBlocked) {
+        toast.warning('Bu kullanıcıyı engellediğin için mesaj gönderemezsin.', 'Engellendi');
+        throw new Error('blocked');
       }
-    } catch (error: any) {
-      console.error('Send message error:', error?.message || error?.code || error);
-      setInputText(textToSend);
-      toast.error('Mesaj gönderilemedi. Lütfen tekrar deneyin.');
-    } finally {
-      setIsSending(false);
-    }
-  };
+      if (!canMessage) {
+        toast.warning('Bu kişiyle mesajlaşmak için önce arkadaş olmalısınız.', 'Arkadaş değil');
+        throw new Error('not_friend');
+      }
+
+      clearTyping();
+      setIsSending(true);
+      try {
+        if (editingMessage) {
+          await editMessageText(chatId, editingMessage.id, textToSend.trim());
+          setEditingMessage(null);
+          toast.success('Mesaj düzenlendi.');
+        } else {
+          await sendTextMessage(chatId, me, friend, textToSend, replyingTo);
+          setReplyingTo(null);
+        }
+      } catch (error: any) {
+        console.error('Send message error:', error?.message || error?.code || error);
+        toast.error('Mesaj gönderilemedi. Lütfen tekrar deneyin.');
+        throw error;
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [
+      me,
+      friend,
+      isBlocked,
+      canMessage,
+      clearTyping,
+      editingMessage,
+      chatId,
+      replyingTo,
+      toast,
+    ]
+  );
 
   const handleForwardMessage = useCallback(
     (message: Message) => {
@@ -791,6 +830,13 @@ export function ChatScreen({
     setReactionTarget(message);
   }, [selectionMode, toggleSelect]);
 
+  const selectedIdsRef = useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
+  const selectionModeRef = useRef(selectionMode);
+  selectionModeRef.current = selectionMode;
+
   const renderMessage = useCallback(
     ({ item }: { item: Message }) => (
       <SwipeableMessage
@@ -800,22 +846,16 @@ export function ChatScreen({
         onImagePress={handleImagePress}
         onLongPress={openReactionPicker}
         onPress={toggleSelect}
-        selected={selectedIds.has(item.id)}
-        selectionMode={selectionMode}
-        searchQuery={searchQuery}
+        selected={selectedIdsRef.current.has(item.id)}
+        selectionMode={selectionModeRef.current}
+        searchQuery={searchQueryRef.current}
       />
     ),
-    [
-      me?.id,
-      handleReplyFromSwipe,
-      handleImagePress,
-      openReactionPicker,
-      toggleSelect,
-      selectedIds,
-      selectionMode,
-      searchQuery,
-    ]
+    [me?.id, handleReplyFromSwipe, handleImagePress, openReactionPicker, toggleSelect]
   );
+
+  const listData =
+    isSearching && searchQuery.trim() ? filteredMessages : messages;
 
   // 3 nokta menusu icin acilir liste (dropdown) kontrolu
   const closeMenu = () => setMenuVisible(false);
@@ -947,7 +987,7 @@ export function ChatScreen({
           ) : (
             <FlatList
               ref={flatListRef}
-              data={messages}
+              data={listData}
               ListHeaderComponent={
                 hasMoreMessages && !isSearching ? (
                   <TouchableOpacity
@@ -960,6 +1000,7 @@ export function ChatScreen({
               }
               renderItem={renderMessage}
               keyExtractor={(item) => item.id}
+              extraData={`${selectedIds.size}-${searchQuery}-${selectionMode}`}
               contentContainerStyle={{ padding: 16, paddingBottom: 20 }}
               onScroll={handleScroll}
               scrollEventThrottle={16}
@@ -982,7 +1023,7 @@ export function ChatScreen({
         </ChatBackground>
 
         {/* Reply Preview */}
-        {replyingTo && (
+        {replyingTo && !pendingMedia && (
           <View style={styles.replyPreview}>
             <View style={styles.replyContent}>
               <Text style={styles.replyLabel}>
@@ -1013,22 +1054,39 @@ export function ChatScreen({
             </Text>
           </View>
         ) : null}
-        <ChatInputBar
-          inputText={inputText}
-          onChangeText={handleTyping}
-          onSend={handleSendMessage}
-          onPickImage={handlePickImage}
-          onPickFile={handlePickFile}
-          onPickVideo={handlePickVideo}
-          onStartRecording={startRecording}
-          onStopRecording={stopRecording}
-          isUploading={isUploading}
-          isRecording={isRecording}
-          recordingDuration={recordingDuration}
-          isSending={isSending}
-          disabled={isBlocked || !canMessage}
-          editing={!!editingMessage}
-        />
+
+        {pendingMedia ? (
+          <MediaPreviewBar
+            key={pendingMedia.uri}
+            media={pendingMedia}
+            sending={isUploading}
+            onCancel={() => {
+              if (isUploading) return;
+              setPendingMedia(null);
+            }}
+            onSend={(caption) => {
+              void handleSendPendingMedia(caption);
+            }}
+          />
+        ) : (
+          <ChatInputBar
+            chatId={chatId}
+            editingMessage={editingMessage}
+            onCancelEdit={() => setEditingMessage(null)}
+            onSendText={handleSendText}
+            onTypingActivity={handleTypingActivity}
+            onPickImage={handlePickImage}
+            onPickFile={handlePickFile}
+            onPickVideo={handlePickVideo}
+            onStartRecording={startRecording}
+            onStopRecording={stopRecording}
+            isUploading={isUploading}
+            isRecording={isRecording}
+            recordingDuration={recordingDuration}
+            isSending={isSending}
+            disabled={isBlocked || !canMessage}
+          />
+        )}
       </KeyboardAvoidingView>
 
       <ChatMenu
@@ -1079,7 +1137,6 @@ export function ChatScreen({
         onEdit={() => {
           if (!reactionTarget) return;
           setEditingMessage(reactionTarget);
-          setInputText(reactionTarget.text ?? '');
           setReplyingTo(null);
         }}
       />

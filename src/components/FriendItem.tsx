@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { Pin, BellOff } from 'lucide-react-native';
 
 import { User } from '../types';
@@ -7,6 +8,7 @@ import { useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
 import { formatTime, formatLastSeen } from '../utils';
 import { HomeListItem } from '../hooks/useFriendsList';
+import { avatarUrl } from '../utils/cloudinaryUrl';
 
 type Props = {
   item: HomeListItem;
@@ -44,8 +46,11 @@ const FriendItemComponent = ({ item, currentUser, onSelect, onLongPress }: Props
     >
       <View style={styles.avatarContainer}>
         <Image
-          source={{ uri: friend?.avatar ?? 'https://via.placeholder.com/50' }}
+          source={{ uri: avatarUrl(friend?.avatar) || 'https://via.placeholder.com/50' }}
           style={styles.avatar}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          recyclingKey={friend?.id}
         />
         {friend?.online && <View style={styles.onlineIndicator} />}
       </View>

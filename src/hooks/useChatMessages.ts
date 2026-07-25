@@ -6,7 +6,6 @@ import {
   query,
   orderBy,
   limitToLast,
-  getDocs,
   QueryDocumentSnapshot,
   DocumentData,
 } from 'firebase/firestore';
@@ -61,6 +60,7 @@ export function useChatMessages(
           .filter((m) => !(m.deletedFor ?? []).includes(myUid));
         setMessages(msgs);
         setHasMoreMessages(snapshot.docs.length >= msgLimit);
+        isLoadingOlderRef.current = false;
 
         const imageUrls = msgs
           .filter((m) => m.type === 'image' && m.imageUrl)
@@ -94,17 +94,11 @@ export function useChatMessages(
     if (!canMessage || !chatId || isLoadingOlderRef.current) return;
     isLoadingOlderRef.current = true;
     try {
-      const messagesRef = collection(db, 'chats', chatId, 'messages');
-      const q = query(messagesRef, orderBy('createdAt', 'asc'), limitToLast(msgLimit + PAGE_SIZE));
-      const snap = await getDocs(q);
-      if (snap.docs.length > msgLimit) {
-        setMsgLimit((prev) => prev + PAGE_SIZE);
-      } else {
-        setHasMoreMessages(false);
-      }
+      // Limit buyut; listener effect msgLimit ile yeniden baglanir.
+      // Onceki getDocs + setMsgLimit cift fetch'i kaldirildi.
+      setMsgLimit((prev) => prev + PAGE_SIZE);
     } catch (error) {
       console.error('loadOlderMessages error:', error);
-    } finally {
       isLoadingOlderRef.current = false;
     }
   };

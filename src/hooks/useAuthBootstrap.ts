@@ -15,6 +15,10 @@ import { getFeedback } from '../feedback/FeedbackContext';
 
 export { registerForPushNotificationsAsync };
 
+/**
+ * Auth bootstrap: user doc geldikten hemen sonra UI acilir;
+ * friendCode / push / online arka planda.
+ */
 export function useAuthBootstrap(
   setCurrentUser: (user: User | null) => void
 ): boolean {
@@ -42,26 +46,43 @@ export function useAuthBootstrap(
           const userData = userDoc.data() as User;
           if (!userData.id) userData.id = authUser.uid;
 
-          if (!userData.friendCode) {
-            try {
-              userData.friendCode = await ensureFriendCode(userData);
-            } catch (e) {
-              console.warn('friendCode olusturulamadi:', e);
-            }
-          }
-
-          try {
-            const token = await syncPushTokenToUser(authUser.uid, userData.pushToken);
-            if (token) userData.pushToken = token;
-          } catch (e) {
-            console.warn('pushToken senkronize edilemedi:', e);
-          }
-
-          await updateDoc(doc(db, 'users', authUser.uid), {
-            online: true,
-            lastActive: serverTimestamp(),
-          });
+          // Kritik yol: once UI
           setCurrentUser(userData);
+          setLoading(false);
+
+          // Arka plan: friendCode, push, online
+          void (async () => {
+            let next = { ...userData };
+            let changed = false;
+            if (!next.friendCode) {
+              try {
+                next.friendCode = await ensureFriendCode(next);
+                changed = true;
+              } catch (e) {
+                console.warn('friendCode olusturulamadi:', e);
+              }
+            }
+            try {
+              const token = await syncPushTokenToUser(authUser.uid, next.pushToken);
+              if (token && token !== next.pushToken) {
+                next.pushToken = token;
+                changed = true;
+              }
+            } catch (e) {
+              console.warn('pushToken senkronize edilemedi:', e);
+            }
+            try {
+              await updateDoc(doc(db, 'users', authUser.uid), {
+                online: true,
+                lastActive: serverTimestamp(),
+              });
+            } catch (e) {
+              console.warn('online write:', e);
+            }
+            if (changed && auth.currentUser?.uid === authUser.uid) {
+              setCurrentUser({ ...next });
+            }
+          })();
         } catch (error: any) {
           const isTimeout = error?.message === 'timeout';
           getFeedback()?.toast.error(
@@ -76,7 +97,6 @@ export function useAuthBootstrap(
             /* ignore */
           }
           setCurrentUser(null);
-        } finally {
           setLoading(false);
         }
       } else {
@@ -88,7 +108,6 @@ export function useAuthBootstrap(
     return unsubscribe;
   }, [setCurrentUser]);
 
-  // App foreground: token rotasyonunu Firestore'a yaz
   useEffect(() => {
     const sub = AppState.addEventListener('change', async (next) => {
       if (next !== 'active' || !auth.currentUser) return;
@@ -107,10 +126,6 @@ export function useAuthBootstrap(
   return loading;
 }
 
-/**
- * Online presence: yalnizca background'da offline;
- * foreground heartbeat lastActive; yazilar generation ile sirali.
- */
 export function useOnlinePresence() {
   useEffect(() => {
     let generation = 0;
@@ -127,7 +142,6 @@ export function useOnlinePresence() {
       if (!auth.currentUser) return;
       try {
         await updateDoc(doc(db, 'users', auth.currentUser.uid), payload);
-        // Stale promise: daha yeni bir AppState yazisi baslamissa sonucu yoksay
         if (gen !== generation) return;
       } catch (error) {
         console.error('Error updating online status:', error);
@@ -160,7 +174,6 @@ export function useOnlinePresence() {
         await writePresence(gen, { online: true, lastActive: serverTimestamp() });
         if (gen === generation) startHeartbeat();
       } else if (nextAppState === 'background') {
-        // inactive (Control Center) flicker'i yok say
         clearHeartbeat();
         await writePresence(gen, {
           online: false,

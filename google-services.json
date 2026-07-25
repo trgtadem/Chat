@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "610020027674",
+    "project_id": "mobilapp-b46ba",
+    "storage_bucket": "mobilapp-b46ba.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:610020027674:android:13ea70c836355af96250a3",
+        "android_client_info": {
+          "package_name": "com.adem_t.MyGameApp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqVZMOKJ3Jmigy7U12p8b_pqAUU9NEizg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

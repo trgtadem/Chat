@@ -135,16 +135,19 @@ export async function sendMediaMessage(
     videoUrl?: string | null;
     fileName?: string | null;
     cloudinaryDeleteToken?: string | null;
+    /** Opsiyonel aciklama / caption */
+    text?: string | null;
   },
   replyTo: Message | null = null
 ): Promise<void> {
+  const caption = payload.text?.trim() || null;
   const messageData: OutgoingMessageData = {
     type,
     senderId: sender.id,
     createdAt: serverTimestamp(),
     status: 'sent',
     chatId,
-    text: null,
+    text: caption,
     imageUrl: payload.imageUrl ?? null,
     audioUrl: payload.audioUrl ?? null,
     fileUrl: payload.fileUrl ?? null,
@@ -164,7 +167,7 @@ export async function sendMediaMessage(
   await notifyUser(
     recipient.id,
     `${sender.name} ${sender.surname}`,
-    typeLabels[type],
+    caption || typeLabels[type],
     { chatId, senderId: sender.id, friendId: recipient.id },
     sender.pushToken
   );

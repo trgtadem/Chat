@@ -4,11 +4,11 @@ import {
   Text,
   FlatList,
   TouchableOpacity,
-  Image,
   StyleSheet,
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
@@ -32,6 +32,7 @@ import { subscribeActiveStatuses } from '../services/status';
 import { subscribeIncomingCalls } from '../services/calls';
 import { useFeedback } from '../feedback/FeedbackContext';
 import { muteChat, unmuteChat } from '../services/mutedChats';
+import { avatarUrl } from '../utils/cloudinaryUrl';
 
 type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
@@ -45,7 +46,7 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
   const forwardingMessage = route.params?.forwardingMessage;
   const forwardHandledRef = useRef(false);
 
-  const { displayList, friendsHydrated, filterBySearch } = useFriendsList();
+  const { displayList, friendsHydrated, filterBySearch, friendIdsKey } = useFriendsList();
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [tab, setTab] = useState<TabKey>('chats');
@@ -64,9 +65,9 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
 
   useEffect(() => {
     if (!currentUser?.id) return;
-    const friendIds = friends.map((f) => f.id);
+    const friendIds = friendIdsKey ? friendIdsKey.split(',') : [];
     return subscribeActiveStatuses(friendIds, currentUser.id, setStatuses);
-  }, [currentUser?.id, friends]);
+  }, [currentUser?.id, friendIdsKey]);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -90,7 +91,7 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
         callId: call.id,
       });
     });
-  }, [currentUser?.id, friends, navigation]);
+  }, [currentUser?.id, friendIdsKey, friends, navigation]);
 
   const handleSearchChange = (text: string) => {
     setSearchQuery(text);
@@ -196,7 +197,12 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Image source={{ uri: currentUser.avatar }} style={styles.headerAvatar} />
+          <Image
+            source={{ uri: avatarUrl(currentUser.avatar) }}
+            style={styles.headerAvatar}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
           <View style={{ flex: 1 }}>
             <Text style={styles.brandTitle}>Sohbetler</Text>
             <Text style={styles.headerSubtitle} numberOfLines={1}>
@@ -254,7 +260,12 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
             onPress={() => navigation.navigate('StatusCompose')}
           >
             <View style={[styles.statusAvatarWrap, styles.statusAdd]}>
-              <Image source={{ uri: currentUser.avatar }} style={styles.statusAvatar} />
+              <Image
+                source={{ uri: avatarUrl(currentUser.avatar) }}
+                style={styles.statusAvatar}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+              />
               <View style={styles.statusPlus}>
                 <Text style={styles.statusPlusText}>+</Text>
               </View>
@@ -271,7 +282,12 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
               }
             >
               <View style={[styles.statusAvatarWrap, styles.statusRing]}>
-                <Image source={{ uri: currentUser.avatar }} style={styles.statusAvatar} />
+                <Image
+                  source={{ uri: avatarUrl(currentUser.avatar) }}
+                  style={styles.statusAvatar}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                />
               </View>
               <Text style={styles.statusName} numberOfLines={1}>
                 Senin
@@ -293,9 +309,13 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
                   <View style={[styles.statusAvatarWrap, styles.statusRing]}>
                     <Image
                       source={{
-                        uri: first.authorAvatar || 'https://via.placeholder.com/50',
+                        uri:
+                          avatarUrl(first.authorAvatar) ||
+                          'https://via.placeholder.com/50',
                       }}
                       style={styles.statusAvatar}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
                     />
                   </View>
                   <Text style={styles.statusName} numberOfLines={1}>
@@ -369,7 +389,11 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
               ? styles.emptyList
               : { paddingBottom: 20, paddingHorizontal: 12 }
           }
-          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          ItemSeparatorComponent={HomeListSeparator}
+          initialNumToRender={12}
+          maxToRenderPerBatch={10}
+          windowSize={9}
+          removeClippedSubviews
           ListEmptyComponent={
             <EmptyState
               icon={tab === 'archived' ? Archive : MessageCircle}
@@ -393,6 +417,10 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
       )}
     </SafeAreaView>
   );
+}
+
+function HomeListSeparator() {
+  return <View style={{ height: 8 }} />;
 }
 
 const makeStyles = (theme: import('../theme').Theme) =>

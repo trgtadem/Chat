@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  Image,
   TouchableOpacity,
   Pressable,
   Animated,
@@ -18,12 +17,14 @@ import {
 import { Check, CheckCheck, Play, Pause, Download, Reply, Film } from 'lucide-react-native';
 import { createAudioPlayer, AudioPlayer } from 'expo-audio';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { Image } from 'expo-image';
 
 import { Message } from '../types';
 import { useTheme } from '../context/AppContext';
 import { Theme } from '../theme';
 import { formatTime } from '../utils';
 import { useFeedback } from '../feedback/FeedbackContext';
+import { chatThumbUrl, videoPosterUrl } from '../utils/cloudinaryUrl';
 
 /** Sag kaydirma mesafesi (px) */
 const REPLY_TRAVEL = 64;
@@ -255,7 +256,23 @@ const SwipeableMessageComponent = ({
             onLongPress={() => onLongPress?.(item)}
             delayLongPress={350}
           >
-            <Image source={{ uri: item.imageUrl }} style={styles.imageMessage} />
+            <Image
+              source={{ uri: chatThumbUrl(item.imageUrl) || item.imageUrl || '' }}
+              style={styles.imageMessage}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              recyclingKey={item.id}
+            />
+            {item.text ? (
+              <Text
+                style={[
+                  styles.captionText,
+                  { color: isMe ? theme.colors.myMessageText : theme.colors.theirMessageText },
+                ]}
+              >
+                {item.text}
+              </Text>
+            ) : null}
           </TouchableOpacity>
         );
 
@@ -287,7 +304,21 @@ const SwipeableMessageComponent = ({
         );
 
       case 'video':
-        return <VideoMessageBubble url={item.videoUrl} styles={styles} />;
+        return (
+          <View>
+            <VideoMessageBubble url={item.videoUrl} styles={styles} />
+            {item.text ? (
+              <Text
+                style={[
+                  styles.captionText,
+                  { color: isMe ? theme.colors.myMessageText : theme.colors.theirMessageText },
+                ]}
+              >
+                {item.text}
+              </Text>
+            ) : null}
+          </View>
+        );
 
       case 'text':
       default:
@@ -349,7 +380,7 @@ const SwipeableMessageComponent = ({
             padding: 0,
             overflow: 'hidden',
             backgroundColor:
-              item.type === 'image'
+              item.type === 'image' && !item.text
                 ? 'transparent'
                 : isMe
                   ? theme.colors.myMessageBubble
@@ -447,9 +478,7 @@ function VideoMessageBubble({
   url?: string;
   styles: ReturnType<typeof makeStyles>;
 }) {
-  const player = useVideoPlayer(url ?? null, (p) => {
-    p.loop = false;
-  });
+  const [playing, setPlaying] = useState(false);
 
   if (!url) {
     return (
@@ -460,6 +489,52 @@ function VideoMessageBubble({
     );
   }
 
+  if (!playing) {
+    const poster = videoPosterUrl(url);
+    return (
+      <TouchableOpacity
+        style={styles.videoThumbWrap}
+        onPress={() => setPlaying(true)}
+        activeOpacity={0.9}
+      >
+        {poster ? (
+          <Image
+            source={{ uri: poster }}
+            style={styles.videoMessage}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+        ) : (
+          <View style={[styles.videoMessage, styles.videoPlaceholder]}>
+            <Film size={36} color="#fff" />
+          </View>
+        )}
+        <View style={styles.videoPlayOverlay}>
+          <View style={styles.videoPlayCircle}>
+            <Play size={22} color="#fff" fill="#fff" />
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  return <ActiveVideoPlayer url={url} styles={styles} onClose={() => setPlaying(false)} />;
+}
+
+function ActiveVideoPlayer({
+  url,
+  styles,
+  onClose,
+}: {
+  url: string;
+  styles: ReturnType<typeof makeStyles>;
+  onClose: () => void;
+}) {
+  const player = useVideoPlayer(url, (p) => {
+    p.loop = false;
+    p.play();
+  });
+
   return (
     <View>
       <VideoView
@@ -468,12 +543,14 @@ function VideoMessageBubble({
         nativeControls
         contentFit="cover"
       />
-      <TouchableOpacity
-        style={styles.videoOpenLink}
-        onPress={() => Linking.openURL(url)}
-      >
-        <Text style={styles.videoOpenText}>Tarayıcıda aç</Text>
-      </TouchableOpacity>
+      <View style={styles.videoActions}>
+        <TouchableOpacity onPress={onClose}>
+          <Text style={styles.videoOpenText}>Kapat</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => Linking.openURL(url)}>
+          <Text style={styles.videoOpenText}>Tarayıcıda aç</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -579,6 +656,12 @@ const makeStyles = (t: Theme) =>
       height: 200,
       borderRadius: t.radius.md,
     },
+    captionText: {
+      paddingHorizontal: 10,
+      paddingTop: 6,
+      paddingBottom: 2,
+      fontSize: 15 * t.fontScale,
+    },
     imageFooter: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -629,6 +712,26 @@ const makeStyles = (t: Theme) =>
       height: 160,
       borderRadius: t.radius.md,
       backgroundColor: '#000',
+    },
+    videoThumbWrap: { position: 'relative' },
+    videoPlaceholder: { alignItems: 'center', justifyContent: 'center' },
+    videoPlayOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    videoPlayCircle: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    videoActions: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      padding: 8,
     },
     videoOpenLink: { padding: 8, alignItems: 'center' },
     videoOpenText: {

@@ -205,13 +205,10 @@ export async function syncPushTokenToUser(
     console.warn('Push: token yok — bu cihaz bildirim alamaz. Dev build + izin + FCM kontrol et.');
     return previousToken ?? null;
   }
-  // Her login'de yaz: eski/bos degeri duzeltir
+  // Token ayniysa Firestore yazma — gereksiz write yok
   if (newToken !== previousToken) {
     await updateDoc(doc(db, 'users', uid), { pushToken: newToken });
     console.log('Push: Firestore pushToken guncellendi');
-  } else {
-    // Ayni token olsa bile dokun (bazi cihazlarda bos string vs)
-    await updateDoc(doc(db, 'users', uid), { pushToken: newToken });
   }
   return newToken;
 }

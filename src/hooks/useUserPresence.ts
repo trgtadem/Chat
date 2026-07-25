@@ -1,3 +1,6 @@
+/**
+ * Presence: skip unchanged ticks; avoid timer-driven Chat re-renders.
+ */
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useEffect, useRef, useState } from 'react';
 
@@ -43,20 +46,22 @@ function toVisibleUser(
   };
 }
 
-/**
- * users/{uid} anlik online/lastSeen (+ privacy).
- * showOnline false ise disariya online=false, lastSeen=null yansitilir.
- * lastActive stale ise cevrimdisi gosterilir.
- */
+function presenceFingerprint(u: User | null): string {
+  if (!u) return '';
+  return `${u.online}|${u.lastSeen?.toMillis?.() ?? u.lastSeen ?? ''}|${u.name}|${u.avatar}`;
+}
+
 export function useUserPresence(uid: string | undefined, respectPrivacy = true) {
   const [user, setUser] = useState<User | null>(null);
   const [privacy, setPrivacy] = useState<PrivacySettings>(DEFAULT_PRIVACY);
   const [loading, setLoading] = useState(Boolean(uid));
   const rawRef = useRef<RawUser | null>(null);
+  const fpRef = useRef('');
 
   useEffect(() => {
     if (!uid) {
       rawRef.current = null;
+      fpRef.current = '';
       setUser(null);
       setLoading(false);
       return;
@@ -67,6 +72,7 @@ export function useUserPresence(uid: string | undefined, respectPrivacy = true) 
       (snap) => {
         if (!snap.exists()) {
           rawRef.current = null;
+          fpRef.current = '';
           setUser(null);
           setLoading(false);
           return;
@@ -74,8 +80,12 @@ export function useUserPresence(uid: string | undefined, respectPrivacy = true) 
         const data = { ...(snap.data() as RawUser), id: snap.id };
         rawRef.current = data;
         const visible = toVisibleUser(data, uid, respectPrivacy);
+        const fp = presenceFingerprint(visible.user);
         setPrivacy(visible.privacy);
-        setUser(visible.user);
+        if (fp !== fpRef.current) {
+          fpRef.current = fp;
+          setUser(visible.user);
+        }
         setLoading(false);
       },
       (error) => {
@@ -85,11 +95,13 @@ export function useUserPresence(uid: string | undefined, respectPrivacy = true) 
     );
   }, [uid, respectPrivacy]);
 
-  // Stale heartbeat: abonelik olmadan UI'yi yenile
   useEffect(() => {
     const id = setInterval(() => {
       if (!uid || !rawRef.current) return;
       const visible = toVisibleUser(rawRef.current, uid, respectPrivacy);
+      const fp = presenceFingerprint(visible.user);
+      if (fp === fpRef.current) return;
+      fpRef.current = fp;
       setUser(visible.user);
     }, 30_000);
     return () => clearInterval(id);
