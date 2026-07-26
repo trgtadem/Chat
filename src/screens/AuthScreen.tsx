@@ -115,6 +115,7 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       return;
     }
 
+<<<<<<< Updated upstream
     // 2. Email formatı kontrolü
     if (!isValidEmail(email.trim())) {
       showError('Geçerli bir email adresi girin.');
@@ -133,6 +134,8 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       return;
     }
 
+=======
+>>>>>>> Stashed changes
     setLoading(true);
     try {
       // 2. Kullanıcıyı oluştur (Firebase otomatik giriş yapar)
@@ -142,13 +145,20 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       // 3. Doğrulama mailini gönder
       await sendEmailVerification(user);
 
+<<<<<<< Updated upstream
       // 4. Kullanıcı profilini oluştur (arkadas kodu ensureFriendCode ile)
       const profile: User = {
+=======
+      // 4. KRİTİK NOKTA: Veritabanına yazma işlemi (Hala giriş yapmış durumdayız)
+      // await kullanmazsan kod beklemez, hemen alt satıra geçer ve hata alırsın!
+      await setDoc(doc(db, 'users', user.uid), {
+>>>>>>> Stashed changes
         id: user.uid,
         email: user.email ?? '',
         name: name.trim(),
         surname: surname.trim(),
         avatar: `https://ui-avatars.com/api/?name=${name}+${surname}&background=random`,
+<<<<<<< Updated upstream
         about: 'Merhaba, ben ChatApp kullanıyorum!',
         online: false,
         lastSeen: null,
@@ -169,10 +179,19 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
         return;
       }
 
+=======
+        createdAt: serverTimestamp(),
+        about: 'Merhaba, ben ChatApp kullanıyorum!',
+        online: false,
+        lastSeen: serverTimestamp(),
+      });
+
+>>>>>>> Stashed changes
       // 5. Veritabanı işlemi BİTTİKTEN SONRA çıkış yap
       await signOut(auth);
 
       // 6. Kullanıcıya bilgi ver ve Login ekranına dön
+<<<<<<< Updated upstream
       toast.success(
         'Doğrulama maili gönderildi. Lütfen mailinizi onaylayıp giriş yapın.',
         'Kayıt Başarılı'
@@ -180,12 +199,26 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
       setIsLoginMode(true);
     } catch (error: any) {
       console.error('Register error:', error?.code, error?.message);
+=======
+      Alert.alert(
+        'Kayıt Başarılı',
+        'Doğrulama maili gönderildi. Lütfen mailinizi onaylayıp giriş yapın.',
+        [{ text: 'Tamam', onPress: () => setIsLoginMode(true) }]
+      );
+
+    } catch (error: any) {
+      // Hata yönetimi
+>>>>>>> Stashed changes
       if (error.code === 'auth/email-already-in-use') {
         showError('Bu email adresi zaten kullanımda.');
       } else if (error.code === 'permission-denied') {
         showError('Veritabanı yazma izni reddedildi. Lütfen internetinizi kontrol edin.');
       } else {
+<<<<<<< Updated upstream
         showError(mapAuthError(error));
+=======
+        showError('Kayıt hatası: ' + error.message);
+>>>>>>> Stashed changes
       }
     } finally {
       setLoading(false);
@@ -204,15 +237,69 @@ export function AuthScreen({ navigation }: AuthScreenProps) {
 
       // Email doğrulaması kontrol et
       if (!user.emailVerified) {
+<<<<<<< Updated upstream
         setNeedsVerification(true);
+=======
+        // Hemen çıkış yapma, alert'e devam et
+        Alert.alert(
+          'Email Doğrulanmadı',
+          'Giriş yapabilmek için email adresinizi doğrulamanız gerekiyor. Doğrulama mailini tekrar göndermek ister misiniz?',
+          [
+            {
+              text: 'İptal',
+              onPress: async () => {
+                // İptal edilince çıkış yap
+                await signOut(auth);
+                setLoading(false);
+              },
+              style: 'cancel',
+            },
+            {
+              text: 'Tekrar Gönder',
+              onPress: async () => {
+                try {
+                  // Mail yeniden gönder
+                  await sendEmailVerification(user);
+
+                  // Başarılı mesajı göster
+                  Alert.alert(
+                    'Mail Gönderildi',
+                    'Doğrulama mailini kontrol edin ve mailinizi onaylayıp tekrar giriş yapın.'
+                  );
+
+                  // Oturumu kapat
+                  await signOut(auth);
+                } catch (error: any) {
+                  showError('Mail gönderilirken hata oluştu: ' + error.message);
+                }
+                setLoading(false);
+              },
+            },
+          ]
+        );
+>>>>>>> Stashed changes
         return;
       }
 
       // Email doğrulandı, normal giriş akışı devam eder
       // App.tsx'deki onAuthStateChanged listener bunu otomatik olarak yönetecek
     } catch (error: any) {
+<<<<<<< Updated upstream
       console.error('Login error:', error?.code, error?.message);
       showError(mapAuthError(error));
+=======
+      let errorMsg = 'Giriş yapılırken bir hata oluştu. Lütfen tekrar deneyin.';
+
+      if (
+        error.code === 'auth/invalid-credential' ||
+        error.code === 'auth/user-not-found' ||
+        error.code === 'auth/wrong-password'
+      ) {
+        errorMsg = 'Email veya şifre hatalı.';
+      }
+
+      showError(errorMsg);
+>>>>>>> Stashed changes
     } finally {
       setLoading(false);
     }
