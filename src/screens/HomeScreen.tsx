@@ -23,6 +23,8 @@ import { GroupSummary, StatusItem, User } from '../types';
 import { useAppContext, useTheme } from '../context/AppContext';
 import { RootStackParamList } from '../types/navigation';
 import { HomeListItem, useFriendsList } from '../hooks/useFriendsList';
+import { useUserPresence } from '../hooks/useUserPresence';
+import { formatLastSeen } from '../utils';
 import { SearchBar } from '../components/SearchBar';
 import { FriendItem } from '../components/FriendItem';
 import { EmptyState } from '../components/EmptyState';
@@ -188,7 +190,11 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
     [currentUser, handleSelectChat, handleChatLongPress]
   );
 
+  const { user: presenceUser } = useUserPresence(currentUser?.id);
+
   if (!currentUser) return null;
+
+  const activeUser = presenceUser || currentUser;
 
   const myStatuses = statusByUid.get(currentUser.id) ?? [];
 
@@ -196,12 +202,16 @@ export function HomeScreen({ navigation, route }: HomeScreenProps) {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Image source={{ uri: currentUser.avatar }} style={styles.headerAvatar} />
+          <Image source={{ uri: activeUser.avatar }} style={styles.headerAvatar} />
           <View style={{ flex: 1 }}>
             <Text style={styles.brandTitle}>Sohbetler</Text>
             <Text style={styles.headerSubtitle} numberOfLines={1}>
-              {currentUser.name}
-              {currentUser.online ? ' · Çevrimiçi' : ''}
+              {activeUser.name}
+              {activeUser.online
+                ? ' · Çevrimiçi'
+                : activeUser.lastSeen
+                  ? ` · Son görülme: ${formatLastSeen(activeUser.lastSeen)}`
+                  : ''}
             </Text>
           </View>
         </View>

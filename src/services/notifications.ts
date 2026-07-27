@@ -25,7 +25,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
         name: 'Mesajlar',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#3B82F6',
+        lightColor: '#4a89d2ff',
         sound: 'default',
         enableVibrate: true,
         showBadge: true,

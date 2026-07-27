@@ -29,7 +29,16 @@ export const formatTime = (timestamp: any) => {
 export const formatLastSeen = (timestamp: any) => {
   try {
     if (!timestamp) return '';
-    const date = typeof timestamp.toDate === 'function' ? timestamp.toDate() : new Date(timestamp);
+    let date: Date;
+    if (typeof timestamp.toDate === 'function') {
+      date = timestamp.toDate();
+    } else if (typeof timestamp === 'object' && timestamp !== null && 'seconds' in timestamp) {
+      date = new Date(Number(timestamp.seconds) * 1000);
+    } else {
+      date = new Date(timestamp);
+    }
+    if (isNaN(date.getTime())) return '';
+
     const now = new Date();
     const isToday =
       date.getDate() === now.getDate() &&

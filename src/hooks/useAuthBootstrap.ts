@@ -159,8 +159,8 @@ export function useOnlinePresence() {
       if (nextAppState === 'active') {
         await writePresence(gen, { online: true, lastActive: serverTimestamp() });
         if (gen === generation) startHeartbeat();
-      } else if (nextAppState === 'background') {
-        // inactive (Control Center) flicker'i yok say
+      } else if (nextAppState === 'background' || nextAppState === 'inactive') {
+        // App background / inactive state
         clearHeartbeat();
         await writePresence(gen, {
           online: false,

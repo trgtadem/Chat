@@ -114,7 +114,7 @@ export function ChatScreen({
   const draftTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const flatListRef = useRef<FlatList>(null);
-  // Otomatik kaydirma kontrolu: ilk acilista en alta in; kullanici yukari
+  // Otomatik kaydirma kontrolu: ilk acilista en alta in; kullanici yukari (ahım tutcak biliyom)
   // kaydirmadiysa yeni mesajda alta in; eski mesaj yuklerken alta zıplama.
   const initialScrollDoneRef = useRef(false);
   const isNearBottomRef = useRef(true);
