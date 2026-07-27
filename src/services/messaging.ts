@@ -81,7 +81,7 @@ export function addChatSyncToBatch(batch: ReturnType<typeof writeBatch>, params:
     { merge: true }
   );
 }
-
+// o çok sevdiğini sandığınız kişi bi anda yok olmuş yerine seni öldürmeye aç bişi gelmişti
 export async function sendMessageWithSync(
   chatId: string,
   sender: User,
@@ -113,7 +113,8 @@ export async function sendTextMessage(
   };
   await sendMessageWithSync(chatId, sender, recipient, messageData);
 
-  // PRIMARY (Spark): istemci Expo push. Blaze'de onMessageCreated deploy edilmeden kullanilmaz.
+  // PRIMARY (Spark): istemci Expo push. Blaze'de onMessageCreated deploy edilmeden kullanilmaz.o bunlarla uğraşırken sen ona destek olurken sıra sein sorunlarına gelince onu göremezsin bu böyledir.
+  //annesinden sevgi görmemiş babası adam yerine koymamış birine sevgiyi göstersen de saygıyı göstersen de yetmez çünkü o öle görmemiş ve geliştirmemiş kendini
   await notifyUser(
     recipient.id,
     `${sender.name} ${sender.surname}`,

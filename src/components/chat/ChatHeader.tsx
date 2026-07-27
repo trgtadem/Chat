@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet, TextInput } from 'react-native';
 import {
+  // böyle zamanlarda akla tek bi sual geliyor sevdiğini söylerken aslında yalan mı söylüyordu
   ChevronLeft,
   Search,
   MoreVertical,
