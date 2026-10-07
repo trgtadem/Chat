@@ -34,6 +34,10 @@ yarn-error.*
 .env*.local
 .env
 
+# Firebase / Google secrets — ASLA commit etme
+*-firebase-adminsdk-*.json
+**/firebase-adminsdk*.json
+service-account*.json
 
 # typescript
 *.tsbuildinfo
